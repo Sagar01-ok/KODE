@@ -14,3 +14,8 @@ add_test(NAME TensorUnitTest COMMAND test_tensor)
 add_executable(test_gradcheck numerical/test_gradcheck.cpp)
 target_link_libraries(test_gradcheck PRIVATE kode_core)
 add_test(NAME GradCheckTest COMMAND test_gradcheck)
+
+# Neural Network framework unit test
+add_executable(test_nn unit/test_nn.cpp)
+target_link_libraries(test_nn PRIVATE kode_core)
+add_test(NAME NNUnitTest COMMAND test_nn)

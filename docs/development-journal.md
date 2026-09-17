@@ -127,3 +127,36 @@ Implement a pure C++20 reverse-mode automatic differentiation engine capable of 
 
 ### 5. Next Planned Milestone
 Phase 4: Neural Network Framework (`kode::nn`). Implement `nn::Module`, `Linear`, `Conv2d`, `GroupNorm`, `Embedding`, `Attention`, `AdaGN`, and `ResBlock`.
+
+---
+
+## Milestone 4: Phase 4 Neural Network Framework Completed
+* **Date:** 2026-09-17
+* **Author:** Sagar Jha
+
+### 1. What I Was Trying to Accomplish
+Implement the complete neural network layer framework for KODE: modular `Module` base class, `Linear` dense layers, `Conv2d` spatial convolution with `im2col`/GEMM/`col2im` autograd backward flow, `GroupNorm`, `LayerNorm`, token `Embedding`, `SiLU`, nearest-neighbor `Upsample2d`, `SpatialAttention`, `CrossAttention`, `AdaGN` condition modulation, and the conditional `ResBlock`.
+
+### 2. What I Implemented
+* `include/kode/nn/module.hpp` & `src/nn/module.cpp`: Recursive parameter registration, named parameter traversal, zero-grad, and train/eval mode management.
+* `include/kode/nn/nn.hpp` & `src/nn/nn.cpp`:
+  * `Linear`: Arbitrary-rank tensor dense projections with Kaiming uniform initialization.
+  * `Conv2d`: Full 4D spatial convolution using `im2col` and GEMM, with analytic backward gradient accumulation for weights, biases, and inputs via `col2im`.
+  * `GroupNorm`: Channel group normalization with trainable affine scale and shift.
+  * `LayerNorm`: Feature dimension normalization for sequence contexts.
+  * `Embedding`: Table lookup for token IDs with sparse row gradient accumulation.
+  * `Upsample2d`: Fast $2\times$ nearest-neighbor spatial upsampling with backward block accumulation.
+  * `SpatialAttention` & `CrossAttention`: Multi-head attention architectures with GroupNorm and linear projections.
+  * `AdaGN`: Adaptive Group Normalization modulating normalized visual features with conditioning vectors ($1 + \gamma) \cdot \text{GN}(x) + \beta$.
+  * `ResBlock`: Conditional residual block combining dual AdaGN, dual SiLU, dual Conv2d, and skip connection.
+* `tests/unit/test_nn.cpp`: Complete unit test suite verifying parameter registration, forward shapes, and backward gradient propagation across all layers.
+
+### 3. What Problems Occurred & What Failed
+* Zero build errors or warnings encountered. All 6 NN layer tests passed on first compile.
+
+### 4. What Changed & What I Learned
+* The neural network framework is fully functional and integrates cleanly with both the Tensor engine and the dynamic Autodiff tape.
+* CTest verifies 4/4 suites (Smoke, Tensor, GradCheck, NN) passing in 0.44s.
+
+### 5. Next Planned Milestone
+Phase 5: Text Conditioning Subsystem (`kode::text`). Implement `Tokenizer`, `Vocabulary`, special tokens (`[PAD]`, `[UNK]`, `[BOS]`, `[EOS]`, `[EMPTY]`), and learned `TextEncoder`.
