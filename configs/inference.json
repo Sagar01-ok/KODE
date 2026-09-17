@@ -1,0 +1,9 @@
+{
+  "sampler": "ddim",
+  "steps": 25,
+  "guidance_scale": 5.0,
+  "resolution": [32, 32],
+  "default_seed": 42,
+  "output_format": "png",
+  "denormalize_range": [0, 255]
+}

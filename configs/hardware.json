@@ -1,0 +1,9 @@
+{
+  "target_device": "cpu",
+  "cpu_threads": 12,
+  "enable_avx2": true,
+  "enable_fma": true,
+  "max_memory_mb": 1500,
+  "gpu_backend": "none",
+  "directml_available": false
+}

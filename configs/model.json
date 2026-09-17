@@ -1,0 +1,17 @@
+{
+  "model_name": "kode_pixel_unet_v1",
+  "image_channels": 3,
+  "image_size": [32, 32],
+  "base_channels": 32,
+  "channel_multipliers": [1, 2, 4],
+  "num_res_blocks_per_level": 1,
+  "norm_groups": 8,
+  "time_embed_dim": 64,
+  "time_mlp_dim": 128,
+  "text_vocab_size": 1024,
+  "text_max_seq_len": 16,
+  "text_embed_dim": 64,
+  "attention_heads": 4,
+  "attention_head_dim": 32,
+  "dropout_rate": 0.0
+}
