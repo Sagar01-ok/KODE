@@ -19,6 +19,7 @@
 | `BENCH-INF-01` | Inference Engine | Single Image DDIM-25 ($32 \times 32$) | Latency (ms) | `3981.53 ms` | **MEASURED** (Phase 9) |
 | `BENCH-INF-02` | Inference Engine | Single Image DDPM-1000 ($32 \times 32$) | Latency (sec) | `87.8 s` (no CFG) / `175.6 s` (CFG) | **MEASURED** (Phase 9) |
 | `BENCH-TRAIN-01`| Training Engine | Throughput (batch size 16) | Samples/sec | `3.77 samples/s` | **MEASURED** (Phase 9) |
+| `BENCH-EVAL-01` | Evaluation Subsystem | Full Grounding + PSNR + SSIM Metric Latency | Latency ($\mu\text{s}$) | `67.82 \mu\text{s}` (14,744 samples/s) | **MEASURED** (Phase 10) |
 
 ---
 

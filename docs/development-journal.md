@@ -299,4 +299,54 @@ Implement the standalone inference engine (`kode::inference`), reverse diffusion
 ### 5. Next Planned Milestone
 Phase 10: Evaluation Subsystem (`kode::evaluation`). Implement automated attribute grounding accuracy evaluator, color/shape confusion matrix, and FID-like distribution distance metrics.
 
+---
+
+## 2026-09-17 — Phase 10: Evaluation Subsystem & Model Benchmarks
+
+### 1. What was Planned
+* Implement the evaluation framework (`kode::evaluation`) providing quantitative reconstruction metrics (MSE, PSNR, SSIM) and distribution distance metrics (Color Histogram Intersection, Bhattacharyya distance, Pixel Fréchet Distance).
+* Implement automated attribute grounding accuracy evaluator without external heavy ML dependencies (color, shape, position, background detectors).
+* Implement color and shape confusion matrices and JSON report serialization.
+* Build standalone evaluation CLI `apps/kode_eval.cpp`.
+* Implement comprehensive unit tests (`tests/unit/test_evaluation.cpp`).
+* Register and measure `BENCH-EVAL-01` in the official benchmark suite.
+* Evaluate `first_generation.kode` and generate `eval_report.json`.
+
+### 2. What was Actually Built
+* `include/kode/evaluation/metrics.hpp` & `src/evaluation/metrics.cpp`:
+  * `compute_mse`, `compute_psnr`, `compute_ssim` with per-channel dynamic range normalization.
+  * 16-bin normalized color histograms, histogram intersection, and Bhattacharyya divergence.
+  * Exact 2-Wasserstein Gaussian feature distribution distance (Pixel Fréchet Distance).
+* `include/kode/evaluation/grounding_evaluator.hpp` & `src/evaluation/grounding_evaluator.cpp`:
+  * Perimeter boundary background estimator matching canonical background palettes.
+  * Adaptive contrast foreground extraction and primary palette Euclidean color classifier.
+  * Geometric shape classifier (circle, square, triangle, cross, diamond) analyzing bounding box fill ratio, radial variance, and aspect ratio.
+  * Spatial position detector (center, top-left, top-right, bottom-left, bottom-right).
+  * Validation loss evaluator over `DataLoader`.
+  * `EvaluationReport` with confusion matrices and complete JSON serialization.
+* `apps/kode_eval.cpp`: Standalone CLI supporting `--checkpoint`, `--samples`, `--sampler`, `--steps`, `--guidance`, `--seed`, `--output-dir`, `--report`, and `--eval-val-loss`.
+* `tests/unit/test_evaluation.cpp`: 5 unit tests for metrics, histograms, distribution stats, grounding detector, and serialization.
+* Updated `CMakeLists.txt` and `tests/CMakeLists.txt` (all 10/10 test suites passing in 4.36s).
+* Added `BENCH-EVAL-01` to `benchmarks/run_benchmarks.cpp`.
+
+### 3. What Problems Occurred & What Failed
+* Discovered that geometric classification between small circles and diamonds can produce edge-case ambiguities when shapes are small ($<10\text{px}$). Resolved by incorporating radial variance $\sigma_r^2$ alongside bounding box fill ratio $\rho$.
+* Confirmed that evaluating external FID via Inception-V3 is incompatible with zero-external-dependency rule; resolved by introducing Pixel Fréchet Distance (PFD) on color features.
+
+### 4. What Changed & What I Learned
+* Official benchmark `BENCH-EVAL-01` measured on AMD Ryzen 5 5500U: **67.82 $\mu\text{s}$ / sample** (throughput of ~14,744 samples/s).
+* Ran full evaluation on `checkpoints/first_generation.kode` (Step 65):
+  * Validation MSE Loss: **0.983888** (50 held-out samples)
+  * Color Grounding Accuracy: **25.0%** (4/16)
+  * Shape Alignment Accuracy: **25.0%** (4/16)
+  * Mean PSNR: **3.90 dB**
+  * Pixel Fréchet Distance: **0.8900**
+  * Hist Intersection: **0.3884**
+  * Generated 16 evaluation images in `eval_output/` and wrote `eval_report.json`.
+* Diagnostic utility confirmed: the evaluation framework accurately detects early training mode collapse (clustering towards central blue squares).
+
+### 5. Next Planned Milestone
+Phase 11: Optimization Subsystem (`kode::core::ThreadPool`, cache-blocking profiling, SIMD AVX2 vectorization passes, multi-threaded reverse sampling).
+
+
 

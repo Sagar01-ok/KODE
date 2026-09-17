@@ -20,6 +20,8 @@ datasets/cache/
 datasets/raw/
 generated/*.png
 generated/*.jpg
+eval_output/*.png
+eval_output/*.jpg
 experiments/logs/
 
 # IDE & OS

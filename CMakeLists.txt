@@ -86,6 +86,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/apps/kode_train.cpp")
     target_link_libraries(kode_train PRIVATE kode_core)
 endif()
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/apps/kode_eval.cpp")
+    add_executable(kode_eval apps/kode_eval.cpp)
+    target_link_libraries(kode_eval PRIVATE kode_core)
+endif()
+
 # Benchmarks executable
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/run_benchmarks.cpp")
     add_executable(run_benchmarks benchmarks/run_benchmarks.cpp)

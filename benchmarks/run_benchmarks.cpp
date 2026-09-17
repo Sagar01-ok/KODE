@@ -5,6 +5,7 @@
 #include "kode/text/text_encoder.hpp"
 #include "kode/text/tokenizer.hpp"
 #include "kode/diffusion/diffusion.hpp"
+#include "kode/evaluation/evaluation.hpp"
 #include "kode/core/logging.hpp"
 #include <iostream>
 #include <chrono>
@@ -17,7 +18,7 @@ using namespace kode;
 int main() {
     try {
         std::cout << "========================================================\n"
-                  << "  KODE Phase 9 Official Benchmark Runner\n"
+                  << "  KODE Phase 10 Official Benchmark Runner\n"
                   << "========================================================\n\n";
 
         // Initialize pipeline
@@ -81,10 +82,36 @@ int main() {
         double throughput = (train_steps_count * 16) / train_sec;
         std::cout << "  => BENCH-TRAIN-01 Throughput: " << throughput << " samples/s\n\n";
 
+        // -----------------------------------------------------------------
+        // BENCH-EVAL-01: Metric Evaluation Latency (Grounding + PSNR + SSIM)
+        // -----------------------------------------------------------------
+        std::cout << "[BENCHMARK] Running BENCH-EVAL-01 (Evaluation Metric Latency)...\n";
+        evaluation::GroundingEvaluator evaluator;
+        tensor::Tensor test_img = tensor::Tensor::randn({3, 32, 32}, 0.0f, 1.0f);
+        tensor::Tensor ref_img = tensor::Tensor::randn({3, 32, 32}, 0.0f, 1.0f);
+        std::string test_prompt = "a small red circle in the center on a black background";
+
+        // Warmup (10 passes)
+        for (int i = 0; i < 10; ++i) {
+            evaluator.evaluate_sample_with_reference(test_img, ref_img, test_prompt);
+        }
+
+        // Measure 1000 passes
+        auto eval_t0 = std::chrono::high_resolution_clock::now();
+        int eval_passes = 1000;
+        for (int i = 0; i < eval_passes; ++i) {
+            evaluator.evaluate_sample_with_reference(test_img, ref_img, test_prompt);
+        }
+        auto eval_t1 = std::chrono::high_resolution_clock::now();
+        double eval_total_us = std::chrono::duration<double, std::micro>(eval_t1 - eval_t0).count();
+        double eval_per_sample_us = eval_total_us / static_cast<double>(eval_passes);
+        std::cout << "  => BENCH-EVAL-01 Mean Metric Latency: " << eval_per_sample_us << " us (" << (eval_per_sample_us / 1000.0) << " ms)\n\n";
+
         std::cout << "========================================================\n"
                   << "SUMMARY OF MEASUREMENTS:\n"
                   << "  BENCH-INF-01 (DDIM-25):     " << ddim_mean << " ms\n"
                   << "  BENCH-TRAIN-01 (Throughput): " << throughput << " samples/s\n"
+                  << "  BENCH-EVAL-01 (Eval Metric): " << eval_per_sample_us << " us (" << (eval_per_sample_us / 1000.0) << " ms)\n"
                   << "========================================================\n";
         return 0;
     } catch (const std::exception& e) {

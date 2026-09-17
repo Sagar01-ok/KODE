@@ -45,5 +45,11 @@ add_executable(test_inference unit/test_inference.cpp)
 target_link_libraries(test_inference PRIVATE kode_core)
 add_test(NAME InferenceUnitTest COMMAND test_inference)
 
+# Evaluation Subsystem unit test (Phase 10)
+add_executable(test_evaluation unit/test_evaluation.cpp)
+target_link_libraries(test_evaluation PRIVATE kode_core)
+add_test(NAME EvaluationUnitTest COMMAND test_evaluation)
+
+
 
 

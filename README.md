@@ -66,6 +66,8 @@ KODE/
 * [Architecture Specification](docs/architecture.md)
 * [System Design](docs/system-design.md)
 * [Mathematical Foundations](docs/mathematical-foundations.md)
+* [Evaluation Framework](docs/evaluation.md)
+* [Benchmarking Framework](docs/benchmarking.md)
 * [Dependencies Audit](docs/dependencies.md)
 * [Research Literature Review](research/literature-review.md)
 * [Architecture Selection Matrix](research/architecture-selection.md)
