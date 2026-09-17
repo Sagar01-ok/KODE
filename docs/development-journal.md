@@ -36,3 +36,29 @@ Establish the empirical and theoretical foundations for KODE, a from-scratch tex
 
 ### 6. Next Planned Milestone
 Phase 1: Configure master `CMakeLists.txt`, compile baseline verification test executable, and initialize project infrastructure.
+
+---
+
+## Milestone 1: Phase 1 Repository & Build Infrastructure Established
+* **Date:** 2026-09-17
+* **Author:** Sagar Jha
+
+### 1. What I Was Trying to Accomplish
+Set up the official C++20 CMake build system, enforce strict 64-byte SIMD alignment and AVX2 vectorization options on MSVC, implement the foundational logging library, and verify the build pipeline with an end-to-end smoke test binary.
+
+### 2. What I Implemented
+* Root `CMakeLists.txt` enforcing C++20 (`/std:c++20`), MSVC warnings `/W4`, `/utf-8`, and release optimizations (`/O2 /Oi /Ot /Gy /fp:precise /arch:AVX2`).
+* Core foundational headers: `include/kode/core/types.hpp`, `include/kode/core/logging.hpp`.
+* Structured thread-safe logging engine: `src/core/logging.cpp`.
+* Comprehensive smoke test suite: `tests/unit/test_smoke.cpp` verifying C++20 concepts, std::span, AVX2 definitions, and SIMD alignment boundaries.
+* Static core library target: `kode_core`.
+
+### 3. What Problems Occurred & What Failed
+* MSVC command line error `D8016` (`/O2` and `/RTC1` incompatible) occurred when CMake generator expressions clashed with default debug flags. Recorded as `EXP-FAIL-001`.
+
+### 4. What Changed & What I Learned
+* Direct manipulation of `CMAKE_CXX_FLAGS_RELEASE` provides reliable, non-conflicting multi-configuration project generation under MSVC.
+* Smoke test `test_smoke.exe` compiled and executed cleanly, verifying functional C++20 concepts, `std::span`, and 64-byte alignment confirmation.
+
+### 5. Next Planned Milestone
+Phase 2: Mathematical Foundations & Tensor Engine (`kode::tensor`). Implement aligned memory storage, multi-dimensional striding, broadcasting, and AVX2 cache-tiled GEMM.

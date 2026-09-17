@@ -44,8 +44,8 @@ KODE is a serious research and systems engineering project to design and impleme
 | Milestone / Phase | Description | Status |
 | :--- | :--- | :--- |
 | **Phase 0 — Research** | Hardware profiling, architecture evaluation, documentation framework, KODE_CONTEXT setup | **COMPLETED** |
-| **Phase 1 — Repository & Build** | Master CMakeLists.txt, basic compilation test, initial git commit | **NEXT (Pending Approval)** |
-| **Phase 2 — Tensor Engine** | Aligned storage, strides, broadcasting, GEMM with AVX2, Conv2D, unit tests | Pending |
+| **Phase 1 — Repository & Build** | Master CMakeLists.txt, C++20/AVX2 MSVC toolchain, smoke test binary, initial tests | **COMPLETED** |
+| **Phase 2 — Tensor Engine** | Aligned storage, strides, broadcasting, GEMM with AVX2, Conv2D, unit tests | **NEXT (Pending Approval)** |
 | **Phase 3 — Autodiff** | Reverse-mode tape, backward closures, numerical gradient checking | Pending |
 | **Phase 4 — Neural Network** | `nn::Module`, Linear, Conv2d, GroupNorm, SiLU, Attention, AdaGN | Pending |
 | **Phase 5 — Text System** | Tokenizer, vocabulary, special tokens, sequence encoder | Pending |
