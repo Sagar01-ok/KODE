@@ -62,3 +62,34 @@ Set up the official C++20 CMake build system, enforce strict 64-byte SIMD alignm
 
 ### 5. Next Planned Milestone
 Phase 2: Mathematical Foundations & Tensor Engine (`kode::tensor`). Implement aligned memory storage, multi-dimensional striding, broadcasting, and AVX2 cache-tiled GEMM.
+
+---
+
+## Milestone 2: Phase 2 Tensor Engine Completed
+* **Date:** 2026-09-17
+* **Author:** Sagar Jha
+
+### 1. What I Was Trying to Accomplish
+Implement the complete mathematical and memory substrate for KODE: an N-dimensional Tensor engine supporting 64-byte aligned memory allocation, strided memory navigation, NumPy-style broadcasting across arbitrary ranks, AVX2 SIMD vectorization, cache-blocked matrix multiplication, and spatial convolution unrolling (`im2col`/`col2im`).
+
+### 2. What I Implemented
+* `include/kode/tensor/tensor.hpp`: The foundational `Tensor` abstraction with rich factory methods (`zeros`, `ones`, `randn`, `uniform`, `from_vector`), metadata accessors, views, slicing, transposing, and functional/in-place arithmetic.
+* `src/tensor/tensor.cpp`: 
+  * Aligned memory allocator (`_aligned_malloc`/`_aligned_free` with 64-byte SIMD boundary).
+  * Multi-dimensional broadcasting engine (`are_shapes_broadcastable`, `broadcast_shapes`).
+  * AVX2-accelerated arithmetic kernels (`add`, `sub`, `mul`, `div`, `clamp`, `silu`).
+  * 3-level cache-blocked GEMM ($MC=64, KC=64, NC=64$) with AVX2 FMA inner micro-kernel for high arithmetic intensity.
+  * Spatial 2D convolution unrolling (`im2col`) and gradient accumulation adjoint (`col2im`).
+  * Reductions (`sum`, `mean`, `var`) with global and dimension-specific `keepdim` variants.
+* `tests/unit/test_tensor.cpp`: Comprehensive unit tests covering allocation, shapes, strides, broadcasting, GEMM correctness against analytical references, `im2col`/`col2im` round-trips, and non-linearities.
+
+### 3. What Problems Occurred & What Failed
+* Release builds with `/O2` optimization and `NDEBUG` silenced standard `assert()`, causing unused variable warnings on MSVC.
+* Resolved by implementing `KODE_TEST_ASSERT`, ensuring unconditional assertion verification across all build types.
+
+### 4. What Changed & What I Learned
+* Cache-blocked GEMM with AVX2 FMA executes $64 \times 64$ matrix multiplies seamlessly on the Ryzen 5 5500U, providing the speed needed for CPU-based diffusion.
+* `test_tensor` and CTest report 100% tests passing with zero compiler warnings.
+
+### 5. Next Planned Milestone
+Phase 3: Automatic Differentiation Engine (`kode::autodiff`). Implement dynamic reverse-mode execution tape, backward closures, and finite-difference gradient checking.
