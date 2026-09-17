@@ -35,4 +35,10 @@ add_executable(test_model unit/test_model.cpp)
 target_link_libraries(test_model PRIVATE kode_core)
 add_test(NAME ModelUnitTest COMMAND test_model)
 
+# Training Engine unit test (Phase 8)
+add_executable(test_training unit/test_training.cpp)
+target_link_libraries(test_training PRIVATE kode_core)
+add_test(NAME TrainingUnitTest COMMAND test_training)
+
+
 
