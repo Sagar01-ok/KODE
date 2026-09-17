@@ -197,6 +197,18 @@ CheckpointMetadata Checkpoint::load(
     auto model_params = model.named_parameters();
     for (const auto& [name, var] : model_params) {
         auto it = loaded_params.find(name);
+        if (it == loaded_params.end()) {
+            auto dot_pos = name.find('.');
+            if (dot_pos != std::string::npos) {
+                it = loaded_params.find(name.substr(dot_pos + 1));
+            }
+        }
+        if (it == loaded_params.end()) {
+            it = loaded_params.find("unet." + name);
+        }
+        if (it == loaded_params.end()) {
+            it = loaded_params.find("text_encoder." + name);
+        }
         if (it != loaded_params.end()) {
             if (it->second.shape() != var->shape()) {
                 throw std::runtime_error("Shape mismatch loading parameter " + name);

@@ -168,13 +168,26 @@ void Trainer::save_checkpoint(const std::string& filepath, float_t loss) {
     meta.arch_enum = 1;
     meta.loss = loss;
 
-    // We serialize the UNet as primary model and optimizer state
-    Checkpoint::save(filepath, *unet_, optimizer_.get(), meta);
+    struct PipelineContainer : public nn::Module {
+        PipelineContainer(std::shared_ptr<model::UNet> u, std::shared_ptr<text::TextEncoder> t) {
+            register_module("unet", std::move(u));
+            register_module("text_encoder", std::move(t));
+        }
+    };
+    PipelineContainer container(unet_, text_encoder_);
+    Checkpoint::save(filepath, container, optimizer_.get(), meta);
     KODE_LOG_INFO("Saved training checkpoint to: ", filepath);
 }
 
 void Trainer::load_checkpoint(const std::string& filepath) {
-    CheckpointMetadata meta = Checkpoint::load(filepath, *unet_, optimizer_.get());
+    struct PipelineContainer : public nn::Module {
+        PipelineContainer(std::shared_ptr<model::UNet> u, std::shared_ptr<text::TextEncoder> t) {
+            register_module("unet", std::move(u));
+            register_module("text_encoder", std::move(t));
+        }
+    };
+    PipelineContainer container(unet_, text_encoder_);
+    CheckpointMetadata meta = Checkpoint::load(filepath, container, optimizer_.get());
     step_ = meta.step;
     epoch_ = meta.epoch;
     if (optimizer_ && scheduler_) {

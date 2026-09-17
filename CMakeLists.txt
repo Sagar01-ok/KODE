@@ -74,3 +74,20 @@ endif()
 
 # Tests directory
 add_subdirectory(tests)
+
+# Standalone CLI executables
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/apps/kode_infer.cpp")
+    add_executable(kode_infer apps/kode_infer.cpp)
+    target_link_libraries(kode_infer PRIVATE kode_core)
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/apps/kode_train.cpp")
+    add_executable(kode_train apps/kode_train.cpp)
+    target_link_libraries(kode_train PRIVATE kode_core)
+endif()
+
+# Benchmarks executable
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/run_benchmarks.cpp")
+    add_executable(run_benchmarks benchmarks/run_benchmarks.cpp)
+    target_link_libraries(run_benchmarks PRIVATE kode_core)
+endif()

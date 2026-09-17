@@ -40,5 +40,10 @@ add_executable(test_training unit/test_training.cpp)
 target_link_libraries(test_training PRIVATE kode_core)
 add_test(NAME TrainingUnitTest COMMAND test_training)
 
+# Inference & Sampling unit test (Phase 9)
+add_executable(test_inference unit/test_inference.cpp)
+target_link_libraries(test_inference PRIVATE kode_core)
+add_test(NAME InferenceUnitTest COMMAND test_inference)
+
 
 

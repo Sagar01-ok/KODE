@@ -229,4 +229,74 @@ Implement a complete image processing and dataset ingestion pipeline for Project
 ### 5. Next Planned Milestone
 Phase 7: Full Model Assembly (`kode::model`). Assemble the complete Conditional Diffusion U-Net with input convolution, DownBlocks, skip connections, Bottleneck spatial self-attention and text cross-attention, UpBlocks, and sinusoidal timestep embedder.
 
+---
+
+## Milestone 7: Phase 7 Model Assembly Completed
+* **Date:** 2026-09-17
+* **Author:** Sagar Jha
+
+### 1. What I Was Trying to Accomplish
+Assemble the full conditional pixel-space diffusion U-Net architecture (`kode::model::UNet`), sinusoidal timestep embedder (`TimestepEmbedder`), and conditioning modulation pipelines.
+
+### 2. What I Implemented
+* `include/kode/model/timestep_embedder.hpp` & `src/model/timestep_embedder.cpp`: Sinusoidal frequency projection, 2-layer MLP projection, and SiLU activations.
+* `include/kode/model/unet.hpp` & `src/model/unet.cpp`: Complete U-Net with input convolution (3 -> 32), 2 downsampling stages with residual blocks and strided convolutions (32 -> 64 -> 128), bottleneck with spatial multi-head self-attention, text cross-attention, dual AdaGN ResBlocks, and 2 upsampling stages with nearest-neighbor upsamplers and skip concatenation.
+* `tests/unit/test_model.cpp`: Parameter count validation (~1,116,000 parameters), forward pass validation, conditioning injection, and backward autograd gradient check.
+* Added `ModelUnitTest` target to `tests/CMakeLists.txt` (7/7 suites passing).
+
+---
+
+## Milestone 8: Phase 8 Training Engine Completed
+* **Date:** 2026-09-17
+* **Author:** Sagar Jha
+
+### 1. What I Was Trying to Accomplish
+Implement the complete training infrastructure: continuous Gaussian diffusion processes (DDPM forward/backward noising), AdamW optimizer with decoupled weight decay, cosine annealing learning rate scheduler with linear warmup, global gradient norm clipping, and custom `.kode` binary checkpoint serialization.
+
+### 2. What I Implemented
+* `include/kode/diffusion/diffusion.hpp` & `src/diffusion/diffusion.cpp`: Gaussian diffusion schedule generator (Linear and Cosine $\alpha$-bars), forward noising $q(x_t | x_0, \epsilon)$, and reverse sampling step operators (`p_sample_step`, `ddim_step`).
+* `include/kode/training/optimizer.hpp` & `src/training/optimizer.cpp`: `AdamW` optimizer, `CosineAnnealingLR` scheduler, and `clip_grad_norm`.
+* `include/kode/training/checkpoint.hpp` & `src/training/checkpoint.cpp`: Custom deterministic `.kode` binary checkpoint serializer and deserializer with metadata header, tensor shapes, and optimizer moments.
+* `include/kode/training/logger.hpp` & `src/training/logger.cpp`: CSV and console training logger with EMA loss tracking.
+* `include/kode/training/trainer.hpp` & `src/training/trainer.cpp`: End-to-end `Trainer` orchestrating forward diffusion, CFG unconditional caption dropout, U-Net forward pass, MSE loss calculation, backward pass, gradient clipping, AdamW step, and periodic checkpointing.
+* `tests/unit/test_training.cpp`: 8/8 test suites passing.
+
+---
+
+## Milestone 9: Phase 9 Inference Pipeline & First Generation Completed
+* **Date:** 2026-09-17
+* **Author:** Sagar Jha
+
+### 1. What I Was Trying to Accomplish
+Implement the standalone inference engine (`kode::inference`), reverse diffusion sampling loops (DDIM accelerated sampling and DDPM ancestral sampling), Classifier-Free Guidance (CFG) modulation, standalone CLI executables (`kode_infer`, `kode_train`), train a small model on the procedural grounding dataset, and generate the project's first real synthetic images.
+
+### 2. What I Implemented
+* `include/kode/inference/sampler.hpp`: `SamplerType` (`DDIM`, `DDPM`), `SamplingConfig` schema with JSON loader, and `compute_inference_timesteps` scheduler.
+* `include/kode/inference/pipeline.hpp` & `src/inference/pipeline.cpp`: `DiffusionPipeline` module wrapping U-Net, TextEncoder, Tokenizer, and GaussianDiffusion. Implemented batched generation with `NoGradGuard`, CFG noise combination, reverse latent stepping, and PNG image saving.
+* `src/training/checkpoint.cpp`: Enhanced parameter deserialization to flexibly handle module hierarchy prefixes (`unet.`, `text_encoder.`).
+* `apps/kode_infer.cpp`: Standalone CLI application with CLI flag parsing (`--checkpoint`, `--prompt`, `--sampler`, `--steps`, `--guidance`, `--seed`, `--output`).
+* `apps/kode_train.cpp`: Standalone training runner for procedural grounding dataset.
+* `benchmarks/run_benchmarks.cpp`: Official benchmark runner for `BENCH-INF-01` and `BENCH-TRAIN-01`.
+* `tests/unit/test_inference.cpp`: Comprehensive test suite verifying timestep schedules, generation determinism, CFG guidance modes, PNG disk roundtrips, and checkpoint serialization.
+* Added `InferenceUnitTest` target to `tests/CMakeLists.txt` (9/9 suites passing).
+
+### 3. What Problems Occurred & What Failed
+* Discovered integer division by zero in `TrainingLogger::log_step` when `log_interval_ == 0`. Fixed immediately with an explicit check `log_interval_ > 0`.
+* Unused parameter warnings `/W4` on MSVC for `sampler` and `unet_cfg` in `pipeline.cpp`. Resolved with `(void)` casts to ensure 100% clean compilation.
+
+### 4. What Changed & What I Learned
+* Trained the first KODE model for 65 steps on 100 procedural grounding pairs, saving `checkpoints/first_generation.kode` (18.08 MB).
+* Successfully generated the first real images:
+  * `generated/sample_001_red_circle.png` (DDIM-25, 4326 ms)
+  * `generated/sample_002_blue_square.png` (DDIM-25, 4406 ms)
+  * `generated/sample_003_green_triangle.png` (DDIM-25, 4675 ms)
+  * `generated/sample_004_ddpm.png` (DDPM-50, 4389 ms)
+* Official benchmarks measured on AMD Ryzen 5 5500U:
+  * `BENCH-INF-01` (DDIM-25, $32 \times 32$): **3981.53 ms**
+  * `BENCH-TRAIN-01` (Throughput, $B=16$): **3.77 samples/s**
+* All 9/9 unit and integration test suites pass in 4.35s under Release mode.
+
+### 5. Next Planned Milestone
+Phase 10: Evaluation Subsystem (`kode::evaluation`). Implement automated attribute grounding accuracy evaluator, color/shape confusion matrix, and FID-like distribution distance metrics.
+
 

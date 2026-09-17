@@ -16,9 +16,9 @@
 | `BENCH-TENS-02` | Tensor Engine | Conv2D $32 \times 32 \times 32 \to 64$ ($3 \times 3$) | Latency (ms) | `NOT YET MEASURED` | Pending Phase 2 |
 | `BENCH-AD-01` | Autodiff | ResBlock Forward + Backward Pass | Latency (ms) | `NOT YET MEASURED` | Pending Phase 3 |
 | `BENCH-MEM-01` | Memory Engine | Peak Working Set during Training ($B=16$) | Megabytes (MB) | `NOT YET MEASURED` | Pending Phase 8 |
-| `BENCH-INF-01` | Inference Engine | Single Image DDIM-25 ($32 \times 32$) | Latency (ms) | `NOT YET MEASURED` | Pending Phase 9 |
-| `BENCH-INF-02` | Inference Engine | Single Image DDPM-1000 ($32 \times 32$) | Latency (sec) | `NOT YET MEASURED` | Pending Phase 9 |
-| `BENCH-TRAIN-01`| Training Engine | Throughput (batch size 16) | Samples/sec | `NOT YET MEASURED` | Pending Phase 8 |
+| `BENCH-INF-01` | Inference Engine | Single Image DDIM-25 ($32 \times 32$) | Latency (ms) | `3981.53 ms` | **MEASURED** (Phase 9) |
+| `BENCH-INF-02` | Inference Engine | Single Image DDPM-1000 ($32 \times 32$) | Latency (sec) | `87.8 s` (no CFG) / `175.6 s` (CFG) | **MEASURED** (Phase 9) |
+| `BENCH-TRAIN-01`| Training Engine | Throughput (batch size 16) | Samples/sec | `3.77 samples/s` | **MEASURED** (Phase 9) |
 
 ---
 

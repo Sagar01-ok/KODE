@@ -50,7 +50,7 @@ void TrainingLogger::log_step(uint64_t step, uint32_t epoch, float_t loss, float
     }
 
     // Console output at interval or first step
-    if (step == 0 || (step + 1) % log_interval_ == 0) {
+    if (log_interval_ > 0 && (step == 0 || (step + 1) % log_interval_ == 0)) {
         std::cout << "[TRAIN] Step " << std::setw(5) << step + 1
                   << " | Epoch " << std::setw(3) << epoch + 1
                   << " | Loss: " << std::fixed << std::setprecision(5) << loss
