@@ -59,6 +59,9 @@ public:
 
     Variable forward(const Variable& input) override;
 
+    Variable weight() const { return weight_; }
+    Variable bias() const { return bias_; }
+
 private:
     dim_t num_groups_;
     dim_t num_channels_;
@@ -76,6 +79,9 @@ public:
     LayerNorm(dim_t normalized_shape, float_t eps = 1e-5f, std::string name = "layer_norm");
 
     Variable forward(const Variable& input) override;
+
+    Variable weight() const { return weight_; }
+    Variable bias() const { return bias_; }
 
 private:
     dim_t normalized_shape_;

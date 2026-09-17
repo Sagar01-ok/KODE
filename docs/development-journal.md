@@ -160,3 +160,36 @@ Implement the complete neural network layer framework for KODE: modular `Module`
 
 ### 5. Next Planned Milestone
 Phase 5: Text Conditioning Subsystem (`kode::text`). Implement `Tokenizer`, `Vocabulary`, special tokens (`[PAD]`, `[UNK]`, `[BOS]`, `[EOS]`, `[EMPTY]`), and learned `TextEncoder`.
+
+---
+
+## Milestone 5: Phase 5 Text Conditioning Subsystem Completed
+* **Date:** 2026-09-17
+* **Author:** Sagar Jha
+
+### 1. What I Was Trying to Accomplish
+Implement a pure from-scratch learned text-conditioning subsystem (`kode::text`) without external NLP/tokenizer dependencies: a custom vocabulary manager with special tokens (`[PAD]=0`, `[UNK]=1`, `[BOS]=2`, `[EOS]=3`, `[EMPTY]=4`), text normalizer and tokenizer with fixed sequence truncation/padding, and a learned `TextEncoder` providing dual output representations: sequence tokens $(B, L, 64)$ for bottleneck Cross-Attention and a masked mean pooled global conditioning vector $(B, 64)$ for AdaGN modulation.
+
+### 2. What I Implemented
+* `include/kode/text/tokenizer.hpp` & `src/text/tokenizer.cpp`:
+  * `Vocabulary`: Inverted indexing, corpus frequency counting with deterministic tie-breaking, token serialization (`save`/`load`) preserving special token IDs.
+  * `Tokenizer`: Case folding, punctuation isolation, whitespace collapsing, empty prompt CFG null conditioning encoding, and decoding with special-token filtering.
+* `include/kode/text/text_encoder.hpp` & `src/text/text_encoder.cpp`:
+  * `TextEncoder`: Token embedding table ($1024 \times 64$), learned positional embeddings ($16 \times 64$), 2-layer sequence projection MLP ($64 \to 128 \to 64$) with SiLU activation, residual addition, and LayerNorm.
+  * Masked mean pooling dynamically excluding `[PAD]` tokens to yield the global conditioning vector $c_{\text{pool}}$.
+  * Convenience API: `forward_prompt` and `forward_batch` for single and batched string prompt conditioning.
+  * Parameter count exactly matches specification: 83,264 FP32 parameters (~333 KB).
+* `tests/unit/test_text.cpp`: Unit test suite verifying vocabulary operations, tokenizer normalization/encoding/decoding/truncation, encoder parameter counts, single & batched forward inference, semantic prompt discrimination, and autograd backward gradient accumulation across all encoder parameters.
+* Added `TextUnitTest` target to `tests/CMakeLists.txt`.
+
+### 3. What Problems Occurred & What Failed
+* Missing `weight()` / `bias()` accessors on `LayerNorm` caused compilation failure in unit tests; resolved by adding accessors to `LayerNorm` and `GroupNorm` in `include/kode/nn/nn.hpp`.
+* Off-by-one in punctuation count during initial test assertion (forgot question mark token); resolved.
+
+### 4. What Changed & What I Learned
+* Token and positional embeddings, sequence MLP, and masked mean pooling are fully differentiable and integrate seamlessly with the Autodiff engine.
+* All 5 Phase 5 text tests pass, and CTest verifies 5/5 test suites passing with 0 failures in 0.73s.
+
+### 5. Next Planned Milestone
+Phase 6: Image I/O & Dataset Subsystem (`kode::image` & `kode::dataset`). Integrate `stb_image` and `stb_image_write`, implement image normalization/resizing, procedural shape/color synthetic grounding dataset generator, and batch caching.
+

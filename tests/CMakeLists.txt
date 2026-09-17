@@ -19,3 +19,8 @@ add_test(NAME GradCheckTest COMMAND test_gradcheck)
 add_executable(test_nn unit/test_nn.cpp)
 target_link_libraries(test_nn PRIVATE kode_core)
 add_test(NAME NNUnitTest COMMAND test_nn)
+
+# Text Processing & Conditioning unit test
+add_executable(test_text unit/test_text.cpp)
+target_link_libraries(test_text PRIVATE kode_core)
+add_test(NAME TextUnitTest COMMAND test_text)
