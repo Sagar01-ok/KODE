@@ -193,3 +193,40 @@ Implement a pure from-scratch learned text-conditioning subsystem (`kode::text`)
 ### 5. Next Planned Milestone
 Phase 6: Image I/O & Dataset Subsystem (`kode::image` & `kode::dataset`). Integrate `stb_image` and `stb_image_write`, implement image normalization/resizing, procedural shape/color synthetic grounding dataset generator, and batch caching.
 
+---
+
+## Milestone 6: Phase 6 Image & Data Subsystem Completed
+* **Date:** 2026-09-17
+* **Author:** Sagar Jha
+
+### 1. What I Was Trying to Accomplish
+Implement a complete image processing and dataset ingestion pipeline for Project KODE without external computer vision frameworks: single-header image file I/O (`stb_image.h` / `stb_image_write.h`), bidirectional uint8 $\leftrightarrow$ planar FP32 $[-1.0, 1.0]$ normalization, from-scratch bilinear resampling and center cropping, data augmentation (horizontal flip), a deterministic procedural geometric/color synthetic grounding dataset (`SyntheticGroundingDataset`) for instant zero-download attribute verification, curated dataset ingestion with JSON metadata (`ImageTextDataset`), and mini-batch collation and shuffling (`DataLoader`).
+
+### 2. What I Implemented
+* Downloaded single-header dependencies permitted by the project audit: `include/stb_image.h`, `include/stb_image_write.h`, and `include/nlohmann/json.hpp`.
+* `include/kode/image/image.hpp` & `src/image/image.cpp`:
+  * `load_raw` and `save_raw_png` / `save_raw_jpg` wrapping `stb_image` for PNG/JPEG image decoding and encoding.
+  * Symmetric pixel normalization: $x_{\text{norm}} = (x_{\text{raw}} / 127.5) - 1.0 \in [-1.0, 1.0]$.
+  * Symmetrical denormalization and quantization clamping to uint8 $[0, 255]$.
+  * Interleaved RGB (HWC) $\leftrightarrow$ Planar RGB (CHW) memory layout transformations for both 3D `(C, H, W)` and 4D `(B, C, H, W)` tensors.
+  * `center_crop`: Computes maximal central square slice of any aspect ratio.
+  * `resize_bilinear`: Continuous coordinate center-aligned bilinear resampling from $(C, H_{\text{src}}, W_{\text{src}}) \to (C, H_{\text{dst}}, W_{\text{dst}})$.
+  * Horizontal flip and stochastic `random_flip_horizontal`.
+* `include/kode/dataset/dataset.hpp` & `src/dataset/dataset.cpp`:
+  * `SyntheticGroundingDataset`: Generates paired $(3, 32, 32)$ images and natural language captions across 5 geometric shapes (`circle`, `square`, `triangle`, `cross`, `diamond`), 8 foreground colors (`red`, `green`, `blue`, `yellow`, `cyan`, `magenta`, `white`, `orange`), 8 background colors, 5 spatial placements, and 2 scales. Fully reproducible from a random seed.
+  * `ImageTextDataset`: Parses `metadata.json`, loads image files, applies optional augmentations, and tokenizes captions.
+  * `DataLoader`: Configurable mini-batch sampling, index shuffling with reproducible seed, `drop_last` option, and tensor collation into unified $(B, 3, 32, 32)$ batch tensors and $(B \times 16)$ token ID vectors.
+* `tests/unit/test_image_data.cpp`: Comprehensive unit tests verifying uint8-to-tensor normalization round-trips, center-crop geometry, bilinear interpolation fidelity, PNG disk I/O, synthetic dataset generation and reproducibility, and DataLoader iteration and batch shapes.
+* Added `ImageDataUnitTest` target to `tests/CMakeLists.txt`.
+
+### 3. What Problems Occurred & What Failed
+* None. All 5/5 image and data tests passed on the first run.
+
+### 4. What Changed & What I Learned
+* Bilinear resampling and procedural rasterization run in sub-millisecond times on Ryzen 5 5500U, enabling instant generation of hundreds of training pairs without disk overhead.
+* CTest verifies 6/6 test suites passing with 0 failures in 0.72s.
+
+### 5. Next Planned Milestone
+Phase 7: Full Model Assembly (`kode::model`). Assemble the complete Conditional Diffusion U-Net with input convolution, DownBlocks, skip connections, Bottleneck spatial self-attention and text cross-attention, UpBlocks, and sinusoidal timestep embedder.
+
+

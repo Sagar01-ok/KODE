@@ -24,3 +24,9 @@ add_test(NAME NNUnitTest COMMAND test_nn)
 add_executable(test_text unit/test_text.cpp)
 target_link_libraries(test_text PRIVATE kode_core)
 add_test(NAME TextUnitTest COMMAND test_text)
+
+# Image & Data Subsystem unit test
+add_executable(test_image_data unit/test_image_data.cpp)
+target_link_libraries(test_image_data PRIVATE kode_core)
+add_test(NAME ImageDataUnitTest COMMAND test_image_data)
+
