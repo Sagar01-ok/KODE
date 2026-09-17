@@ -484,4 +484,54 @@ Variable transpose(const Variable& a, dim_t dim0, dim_t dim1) {
     return out;
 }
 
+Variable cat(const std::vector<Variable>& inputs, dim_t dim) {
+    if (inputs.empty()) {
+        throw std::invalid_argument("cat requires at least one input variable.");
+    }
+    if (inputs.size() == 1) {
+        return inputs[0];
+    }
+    std::vector<tensor::Tensor> raw_tensors;
+    raw_tensors.reserve(inputs.size());
+    bool requires_grad = false;
+    for (const auto& var : inputs) {
+        raw_tensors.push_back(var->data());
+        if (var->requires_grad()) {
+            requires_grad = true;
+        }
+    }
+
+    tensor::Tensor res = tensor::Tensor::cat(raw_tensors, dim);
+    bool req = requires_grad && Tape::is_active();
+    Variable out = make_variable(std::move(res), req, "cat");
+
+    if (req) {
+        dim_t resolved_dim = dim;
+        if (resolved_dim < 0) {
+            resolved_dim += inputs[0]->data().ndim();
+        }
+        auto node = std::make_shared<BackwardNode>(
+            inputs,
+            [inputs, resolved_dim](const tensor::Tensor& grad_out) {
+                dim_t start_idx = 0;
+                for (size_t i = 0; i < inputs.size(); ++i) {
+                    dim_t len = inputs[i]->shape()[resolved_dim];
+                    if (inputs[i]->requires_grad()) {
+                        tensor::Tensor grad_slice = grad_out.slice(resolved_dim, start_idx, start_idx + len).contiguous();
+                        if (inputs[i]->grad().is_empty()) {
+                            inputs[i]->grad() = grad_slice.clone();
+                        } else {
+                            inputs[i]->grad().add_(grad_slice);
+                        }
+                    }
+                    start_idx += len;
+                }
+            },
+            "cat"
+        );
+        out->set_creator(std::move(node));
+    }
+    return out;
+}
+
 } // namespace kode::autodiff

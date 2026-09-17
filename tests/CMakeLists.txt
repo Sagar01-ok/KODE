@@ -30,3 +30,9 @@ add_executable(test_image_data unit/test_image_data.cpp)
 target_link_libraries(test_image_data PRIVATE kode_core)
 add_test(NAME ImageDataUnitTest COMMAND test_image_data)
 
+# Model Assembly unit test (Phase 7)
+add_executable(test_model unit/test_model.cpp)
+target_link_libraries(test_model PRIVATE kode_core)
+add_test(NAME ModelUnitTest COMMAND test_model)
+
+

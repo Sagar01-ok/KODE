@@ -24,6 +24,7 @@ public:
     static Tensor randn(const Shape& shape, float_t mean = 0.0f, float_t std = 1.0f, uint64_t seed = 0);
     static Tensor uniform(const Shape& shape, float_t low = -1.0f, float_t high = 1.0f, uint64_t seed = 0);
     static Tensor from_vector(const Shape& shape, const std::vector<float_t>& data);
+    static Tensor cat(const std::vector<Tensor>& tensors, dim_t dim = 0);
 
     // Dimensionality and Metadata
     const Shape& shape() const noexcept { return shape_; }

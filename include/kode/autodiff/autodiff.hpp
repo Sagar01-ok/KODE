@@ -99,6 +99,7 @@ Variable sum(const Variable& a, dim_t dim = -1, bool keepdim = false);
 Variable mean(const Variable& a, dim_t dim = -1, bool keepdim = false);
 Variable reshape(const Variable& a, const Shape& new_shape);
 Variable transpose(const Variable& a, dim_t dim0, dim_t dim1);
+Variable cat(const std::vector<Variable>& inputs, dim_t dim = 0);
 
 // Operator Overloads
 inline Variable operator+(const Variable& a, const Variable& b) { return add(a, b); }

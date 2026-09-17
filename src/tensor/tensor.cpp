@@ -149,6 +149,66 @@ Tensor Tensor::from_vector(const Shape& shape, const std::vector<float_t>& vec) 
     return t;
 }
 
+Tensor Tensor::cat(const std::vector<Tensor>& tensors, dim_t dim) {
+    if (tensors.empty()) {
+        throw std::invalid_argument("Cannot concatenate empty list of tensors.");
+    }
+    if (tensors.size() == 1) {
+        return tensors[0].clone();
+    }
+    dim_t r = tensors[0].ndim();
+    if (r == 0) {
+        throw std::invalid_argument("Cannot concatenate 0-dim scalar tensors.");
+    }
+    if (dim < 0) dim += r;
+    if (dim < 0 || dim >= r) {
+        throw std::out_of_range("Concatenation dimension out of range.");
+    }
+
+    Shape out_shape = tensors[0].shape();
+    dim_t total_dim_size = 0;
+
+    for (size_t i = 0; i < tensors.size(); ++i) {
+        if (tensors[i].ndim() != r) {
+            throw std::invalid_argument("All tensors in cat must have the same number of dimensions.");
+        }
+        for (dim_t d = 0; d < r; ++d) {
+            if (d != dim && tensors[i].shape()[d] != out_shape[d]) {
+                throw std::invalid_argument("Tensor shape mismatch in non-concatenating dimension.");
+            }
+        }
+        total_dim_size += tensors[i].shape()[dim];
+    }
+    out_shape[dim] = total_dim_size;
+
+    Tensor result(out_shape, 0.0f);
+    float_t* dst_ptr = result.data();
+
+    dim_t outer_count = 1;
+    for (dim_t d = 0; d < dim; ++d) {
+        outer_count *= out_shape[d];
+    }
+    dim_t inner_count = 1;
+    for (dim_t d = dim + 1; d < r; ++d) {
+        inner_count *= out_shape[d];
+    }
+
+    for (dim_t o = 0; o < outer_count; ++o) {
+        dim_t dim_offset = 0;
+        for (const auto& t : tensors) {
+            Tensor contig = t.contiguous();
+            dim_t cur_dim_size = contig.shape()[dim];
+            dim_t chunk_size = cur_dim_size * inner_count;
+            const float_t* src = contig.data() + o * chunk_size;
+            float_t* dst = dst_ptr + (o * total_dim_size + dim_offset) * inner_count;
+            std::memcpy(dst, src, static_cast<size_t>(chunk_size) * sizeof(float_t));
+            dim_offset += cur_dim_size;
+        }
+    }
+
+    return result;
+}
+
 // ---------------------------------------------------------------------------
 // Metadata & Memory
 // ---------------------------------------------------------------------------
