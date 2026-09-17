@@ -9,3 +9,8 @@ add_test(NAME SmokeTest COMMAND test_smoke)
 add_executable(test_tensor unit/test_tensor.cpp)
 target_link_libraries(test_tensor PRIVATE kode_core)
 add_test(NAME TensorUnitTest COMMAND test_tensor)
+
+# Autodiff numerical gradcheck test
+add_executable(test_gradcheck numerical/test_gradcheck.cpp)
+target_link_libraries(test_gradcheck PRIVATE kode_core)
+add_test(NAME GradCheckTest COMMAND test_gradcheck)

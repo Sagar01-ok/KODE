@@ -93,3 +93,37 @@ Implement the complete mathematical and memory substrate for KODE: an N-dimensio
 
 ### 5. Next Planned Milestone
 Phase 3: Automatic Differentiation Engine (`kode::autodiff`). Implement dynamic reverse-mode execution tape, backward closures, and finite-difference gradient checking.
+
+---
+
+## Milestone 3: Phase 3 Automatic Differentiation Engine Completed
+* **Date:** 2026-09-17
+* **Author:** Sagar Jha
+
+### 1. What I Was Trying to Accomplish
+Implement a pure C++20 reverse-mode automatic differentiation engine capable of building dynamic computational graphs, computing vector-Jacobian products (VJPs), performing topological gradient backpropagation, correctly un-broadcasting gradients across mismatched shapes, and verifying all analytical derivatives against central finite differences.
+
+### 2. What I Implemented
+* `include/kode/autodiff/autodiff.hpp`: 
+  * `Variable` and `VariableImpl` reference types managing forward tensors, gradient buffers, and DAG connection pointers.
+  * `BackwardNode` recording parent input variables and lambda backward closures.
+  * `Tape` and `NoGradGuard` scoped execution controllers.
+  * Core differentiable operators: `add`, `sub`, `mul`, `div`, `neg`, `matmul`, `silu`, `relu`, `sum`, `mean`, `reshape`, `transpose`.
+* `src/autodiff/autodiff.cpp`:
+  * Graph traversal engine executing post-order topological sort on active DAG nodes.
+  * Dynamic gradient un-broadcasting (`reduce_gradient_to_shape`) summing out broadcasted dimensions during backward propagation.
+  * In-place gradient accumulation (`grad.add_(...)`) supporting mini-batch accumulation without allocation thrashing.
+* `tests/numerical/test_gradcheck.cpp`: High-precision numerical gradient verification suite comparing analytical autograd against central finite difference approximations:
+  $$\frac{f(x + \epsilon) - f(x - \epsilon)}{2\epsilon}$$
+  Verified on basic arithmetic, matrix multiplications, SiLU non-linearities, tensor broadcasting, and a full multi-layer perceptron forward-backward loop.
+
+### 3. What Problems Occurred & What Failed
+* Initial gradcheck failed on SiLU tail regions and small quadratic gradients when using a purely relative tolerance metric due to IEEE 754 float32 roundoff and catastrophic cancellation.
+* Resolved by adhering to standard machine-learning gradcheck criteria using both absolute tolerance (`atol = 1e-3`) and relative tolerance (`rtol = 1e-2`).
+
+### 4. What Changed & What I Learned
+* All numerical tests passed with maximum relative errors well within analytical tolerances.
+* The automatic differentiation engine is fully verified and ready for complex neural network layers.
+
+### 5. Next Planned Milestone
+Phase 4: Neural Network Framework (`kode::nn`). Implement `nn::Module`, `Linear`, `Conv2d`, `GroupNorm`, `Embedding`, `Attention`, `AdaGN`, and `ResBlock`.
