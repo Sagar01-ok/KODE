@@ -43,6 +43,11 @@ std::vector<uint8_t> chw_tensor_to_hwc_uint8(const tensor::Tensor& tensor, dim_t
 tensor::Tensor load_image(const std::string& filepath, int target_width = 32, int target_height = 32);
 bool save_image_png(const std::string& filepath, const tensor::Tensor& image, dim_t batch_index = 0);
 
+// In-memory PNG encoding and Base64 utilities
+std::string base64_encode(const uint8_t* data, size_t length);
+std::vector<uint8_t> encode_png_memory(const tensor::Tensor& image, dim_t batch_index = 0);
+std::string encode_png_base64(const tensor::Tensor& image, dim_t batch_index = 0);
+
 // ---------------------------------------------------------------------------
 // Spatial Transformations & Augmentation
 // ---------------------------------------------------------------------------

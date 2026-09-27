@@ -145,6 +145,10 @@ private:
     std::shared_ptr<float_t[]> storage_{nullptr};
 };
 
+// High-performance CPU GEMM (C = A * B, or C += A * B if accumulate=true)
+// A: (m x k), B: (k x n), C: (m x n)
+void gemm_cpu(const float_t* A, const float_t* B, float_t* C, dim_t m, dim_t k, dim_t n, bool accumulate = false);
+
 // Broadcasting helper
 bool are_shapes_broadcastable(const Shape& a, const Shape& b);
 Shape broadcast_shapes(const Shape& a, const Shape& b);

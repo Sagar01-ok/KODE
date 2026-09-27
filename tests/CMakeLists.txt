@@ -50,6 +50,43 @@ add_executable(test_evaluation unit/test_evaluation.cpp)
 target_link_libraries(test_evaluation PRIVATE kode_core)
 add_test(NAME EvaluationUnitTest COMMAND test_evaluation)
 
+# Optimization Subsystem unit test (Phase 11)
+add_executable(test_optimization unit/test_optimization.cpp)
+target_link_libraries(test_optimization PRIVATE kode_core)
+add_test(NAME OptimizationUnitTest COMMAND test_optimization)
 
+# Web Interface & REST API unit test (Phase 12)
+add_executable(test_web unit/test_web.cpp)
+target_link_libraries(test_web PRIVATE kode_core)
+add_test(NAME WebUnitTest COMMAND test_web)
 
+# Integration & Regression Test Targets (Phase 13)
+# E2E Pipeline Integration Test
+add_executable(test_pipeline_e2e integration/test_pipeline_e2e.cpp)
+target_link_libraries(test_pipeline_e2e PRIVATE kode_core)
+add_test(NAME PipelineE2EIntegrationTest COMMAND test_pipeline_e2e)
 
+# Checkpoint Roundtrip & Robustness Integration Test
+add_executable(test_checkpoint_roundtrip integration/test_checkpoint_roundtrip.cpp)
+target_link_libraries(test_checkpoint_roundtrip PRIVATE kode_core)
+add_test(NAME CheckpointRoundtripIntegrationTest COMMAND test_checkpoint_roundtrip)
+
+# Concurrency & Stress Integration Test
+add_executable(test_concurrency_stress integration/test_concurrency_stress.cpp)
+target_link_libraries(test_concurrency_stress PRIVATE kode_core)
+add_test(NAME ConcurrencyStressIntegrationTest COMMAND test_concurrency_stress)
+
+# Numerical Consistency Integration Test
+add_executable(test_numerical_consistency integration/test_numerical_consistency.cpp)
+target_link_libraries(test_numerical_consistency PRIVATE kode_core)
+add_test(NAME NumericalConsistencyIntegrationTest COMMAND test_numerical_consistency)
+
+# Extended Numerical GradCheck Test
+add_executable(test_extended_gradcheck numerical/test_extended_gradcheck.cpp)
+target_link_libraries(test_extended_gradcheck PRIVATE kode_core)
+add_test(NAME ExtendedGradCheckTest COMMAND test_extended_gradcheck)
+
+# Regression & Determinism Test
+add_executable(test_regression_determinism numerical/test_regression_determinism.cpp)
+target_link_libraries(test_regression_determinism PRIVATE kode_core)
+add_test(NAME RegressionDeterminismTest COMMAND test_regression_determinism)

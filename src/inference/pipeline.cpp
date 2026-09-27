@@ -182,37 +182,59 @@ tensor::Tensor DiffusionPipeline::generate_batch(
     std::vector<dim_t> timesteps = compute_inference_timesteps(total_T, config.steps, config.sampler);
     dim_t num_inference_steps = static_cast<dim_t>(timesteps.size());
 
+    text::TextEncoding cfg_enc;
+    if (use_cfg) {
+        cfg_enc.sequence_tokens = autodiff::cat({cond_enc.sequence_tokens, uncond_enc.sequence_tokens}, 0);
+        cfg_enc.pooled_vector = autodiff::cat({cond_enc.pooled_vector, uncond_enc.pooled_vector}, 0);
+    }
+
     // 4. Reverse denoising process
     for (dim_t step_idx = 0; step_idx < num_inference_steps; ++step_idx) {
         dim_t t_cur = timesteps[step_idx];
         dim_t t_prev = (step_idx + 1 < num_inference_steps) ? timesteps[step_idx + 1] : -1;
 
-        std::vector<float_t> t_vec(b, static_cast<float_t>(t_cur));
-        autodiff::Variable xt_var = autodiff::make_variable(xt, false, "xt_in");
-
-        // Conditional prediction: UNet(xt, t_cur, cond_enc)
-        autodiff::Variable eps_cond_var = unet_->forward(xt_var, t_vec, cond_enc);
-        tensor::Tensor eps_cond = eps_cond_var->data();
-
         tensor::Tensor eps_pred;
         if (use_cfg) {
-            // Unconditional prediction: UNet(xt, t_cur, uncond_enc)
-            autodiff::Variable xt_uncond_var = autodiff::make_variable(xt, false, "xt_uncond_in");
-            autodiff::Variable eps_uncond_var = unet_->forward(xt_uncond_var, t_vec, uncond_enc);
-            tensor::Tensor eps_uncond = eps_uncond_var->data();
+            // Batched conditional and unconditional forward pass
+            tensor::Tensor xt_batched({2 * b, c, h, w});
+            const float_t* xt_data = xt.data();
+            float_t* xt_b_data = xt_batched.data();
+            size_t half_bytes = static_cast<size_t>(b * c * h * w) * sizeof(float_t);
+            std::memcpy(xt_b_data, xt_data, half_bytes);
+            std::memcpy(xt_b_data + (b * c * h * w), xt_data, half_bytes);
 
-            // CFG formulation: eps_pred = eps_uncond + s * (eps_cond - eps_uncond)
-            eps_pred = tensor::Tensor(eps_cond.shape(), 0.0f);
-            const float_t* c_ptr = eps_cond.data();
-            const float_t* u_ptr = eps_uncond.data();
+            std::vector<float_t> t_vec(static_cast<size_t>(2 * b), static_cast<float_t>(t_cur));
+            autodiff::Variable xt_var = autodiff::make_variable(std::move(xt_batched), false, "xt_in");
+
+            autodiff::Variable eps_both_var = unet_->forward(xt_var, t_vec, cfg_enc);
+            const tensor::Tensor& eps_both = eps_both_var->data();
+
+            eps_pred = tensor::Tensor({b, c, h, w});
+            dim_t numel = b * c * h * w;
+            const float_t* c_ptr = eps_both.data();
+            const float_t* u_ptr = eps_both.data() + numel;
             float_t* p_ptr = eps_pred.data();
-            dim_t numel = eps_cond.numel();
             float_t s = config.guidance_scale;
-            for (dim_t i = 0; i < numel; ++i) {
+
+            dim_t i = 0;
+#if defined(__AVX2__)
+            __m256 vs = _mm256_set1_ps(s);
+            for (; i + 8 <= numel; i += 8) {
+                __m256 vc = _mm256_loadu_ps(c_ptr + i);
+                __m256 vu = _mm256_loadu_ps(u_ptr + i);
+                __m256 diff = _mm256_sub_ps(vc, vu);
+                __m256 vp = _mm256_fmadd_ps(vs, diff, vu);
+                _mm256_storeu_ps(p_ptr + i, vp);
+            }
+#endif
+            for (; i < numel; ++i) {
                 p_ptr[i] = u_ptr[i] + s * (c_ptr[i] - u_ptr[i]);
             }
         } else {
-            eps_pred = std::move(eps_cond);
+            std::vector<float_t> t_vec(static_cast<size_t>(b), static_cast<float_t>(t_cur));
+            autodiff::Variable xt_var = autodiff::make_variable(xt, false, "xt_in");
+            autodiff::Variable eps_cond_var = unet_->forward(xt_var, t_vec, cond_enc);
+            eps_pred = eps_cond_var->data();
         }
 
         // Stepping latent to t_prev

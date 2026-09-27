@@ -12,14 +12,14 @@
 
 | Benchmark Identifier | Subsystem | Target Operation | Metric | Official Measurement | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `BENCH-TENS-01` | Tensor Engine | GEMM $512 \times 512 \times 512$ (FP32) | GFLOP/s | `NOT YET MEASURED` | Pending Phase 2 |
-| `BENCH-TENS-02` | Tensor Engine | Conv2D $32 \times 32 \times 32 \to 64$ ($3 \times 3$) | Latency (ms) | `NOT YET MEASURED` | Pending Phase 2 |
+| `BENCH-TENS-01` | Tensor Engine | GEMM $512 \times 512 \times 512$ (FP32) | GFLOP/s | `169.84 GFLOP/s` (1.58 ms) | **MEASURED** (Phase 11) |
+| `BENCH-TENS-02` | Tensor Engine | Conv2D $32 \times 32 \times 32 \to 64$ ($3 \times 3$) | Latency (ms) | `1.588 ms` | **MEASURED** (Phase 11) |
 | `BENCH-AD-01` | Autodiff | ResBlock Forward + Backward Pass | Latency (ms) | `NOT YET MEASURED` | Pending Phase 3 |
 | `BENCH-MEM-01` | Memory Engine | Peak Working Set during Training ($B=16$) | Megabytes (MB) | `NOT YET MEASURED` | Pending Phase 8 |
-| `BENCH-INF-01` | Inference Engine | Single Image DDIM-25 ($32 \times 32$) | Latency (ms) | `3981.53 ms` | **MEASURED** (Phase 9) |
+| `BENCH-INF-01` | Inference Engine | Single Image DDIM-25 ($32 \times 32$) | Latency (ms) | `2674.10 ms` (32.8% faster) | **MEASURED** (Phase 11) |
 | `BENCH-INF-02` | Inference Engine | Single Image DDPM-1000 ($32 \times 32$) | Latency (sec) | `87.8 s` (no CFG) / `175.6 s` (CFG) | **MEASURED** (Phase 9) |
-| `BENCH-TRAIN-01`| Training Engine | Throughput (batch size 16) | Samples/sec | `3.77 samples/s` | **MEASURED** (Phase 9) |
-| `BENCH-EVAL-01` | Evaluation Subsystem | Full Grounding + PSNR + SSIM Metric Latency | Latency ($\mu\text{s}$) | `67.82 \mu\text{s}` (14,744 samples/s) | **MEASURED** (Phase 10) |
+| `BENCH-TRAIN-01`| Training Engine | Throughput (batch size 16) | Samples/sec | `7.87 samples/s` (+108.8% faster) | **MEASURED** (Phase 11) |
+| `BENCH-EVAL-01` | Evaluation Subsystem | Full Grounding + PSNR + SSIM Metric Latency | Latency ($\mu\text{s}$) | `67.76 \mu\text{s}` (14,758 samples/s) | **MEASURED** (Phase 11) |
 
 ---
 

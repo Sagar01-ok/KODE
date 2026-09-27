@@ -60,6 +60,7 @@ file(GLOB_RECURSE KODE_CORE_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inference/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/dataset/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/evaluation/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/web/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/utils/*.cpp"
 )
 
@@ -70,6 +71,9 @@ enable_testing()
 if(KODE_CORE_SOURCES)
     add_library(kode_core STATIC ${KODE_CORE_SOURCES})
     target_include_directories(kode_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    if(WIN32)
+        target_link_libraries(kode_core PUBLIC ws2_32 crypt32)
+    endif()
 endif()
 
 # Tests directory
@@ -89,6 +93,11 @@ endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/apps/kode_eval.cpp")
     add_executable(kode_eval apps/kode_eval.cpp)
     target_link_libraries(kode_eval PRIVATE kode_core)
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/apps/kode_server.cpp")
+    add_executable(kode_server apps/kode_server.cpp)
+    target_link_libraries(kode_server PRIVATE kode_core)
 endif()
 
 # Benchmarks executable

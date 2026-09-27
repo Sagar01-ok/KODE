@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KODE — Lightweight Text-to-Image AI</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <header class="header">
+      <div class="header-brand">
+        <div class="logo-badge">KODE</div>
+        <div class="header-titles">
+          <h1>Text-to-Image Diffusion AI</h1>
+          <p class="subtitle">Modern C++20 • AVX2 Optimized • Zero Black-Box ML</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="status-indicator">
+          <span class="status-dot ready" id="status-dot"></span>
+          <span class="status-text" id="status-text">Ready</span>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btn-telemetry">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          Telemetry
+        </button>
+      </div>
+    </header>
+
+    <main class="main-layout">
+      <!-- Left Panel: Studio Controls -->
+      <section class="panel studio-panel">
+        <div class="panel-section">
+          <label class="section-label" for="prompt-input">Prompt</label>
+          <div class="prompt-wrapper">
+            <textarea id="prompt-input" rows="3" maxlength="256" placeholder="Describe the image you wish to synthesize (e.g. a vibrant blue circle on dark background)..."></textarea>
+            <div class="prompt-meta">
+              <span class="prompt-counter" id="prompt-counter">0 / 256</span>
+              <span class="prompt-hint">Ctrl + Enter to synthesize</span>
+            </div>
+          </div>
+          <div class="presets-row">
+            <span class="preset-label">Presets:</span>
+            <div class="preset-chips" id="preset-chips">
+              <button class="chip" data-prompt="a vibrant blue circle on dark background">Blue Circle</button>
+              <button class="chip" data-prompt="a bright red square in the center">Red Square</button>
+              <button class="chip" data-prompt="a green triangle on red background">Green Triangle</button>
+              <button class="chip" data-prompt="a white cross on navy background">White Cross</button>
+              <button class="chip" data-prompt="a yellow diamond in the center">Yellow Diamond</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel-section controls-grid">
+          <div class="control-group">
+            <label for="sampler-select">Sampler</label>
+            <select id="sampler-select" class="form-select">
+              <option value="ddim" selected>DDIM (Deterministic, Fast)</option>
+              <option value="ddpm">DDPM (Stochastic, Classic)</option>
+            </select>
+          </div>
+
+          <div class="control-group">
+            <div class="control-label-row">
+              <label for="steps-slider">Sampling Steps</label>
+              <span class="value-display" id="steps-val">25</span>
+            </div>
+            <div class="range-input-row">
+              <input type="range" id="steps-slider" min="1" max="100" value="25" class="form-range">
+              <input type="number" id="steps-number" min="1" max="1000" value="25" class="form-number">
+            </div>
+          </div>
+
+          <div class="control-group">
+            <div class="control-label-row">
+              <label for="guidance-slider">CFG Guidance Scale</label>
+              <span class="value-display" id="guidance-val">5.0</span>
+            </div>
+            <div class="range-input-row">
+              <input type="range" id="guidance-slider" min="0" max="15" step="0.5" value="5.0" class="form-range">
+              <input type="number" id="guidance-number" min="0" max="20" step="0.5" value="5.0" class="form-number">
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label for="seed-input">Seed</label>
+            <div class="seed-input-row">
+              <input type="number" id="seed-input" value="1337" class="form-input">
+              <button class="btn btn-secondary btn-icon" id="btn-random-seed" title="Generate Random Seed">🎲</button>
+            </div>
+            <label class="checkbox-row">
+              <input type="checkbox" id="auto-randomize-seed" checked>
+              <span>Randomize seed on generate</span>
+            </label>
+          </div>
+
+          <div class="control-group full-width">
+            <label for="model-select">Active Checkpoint</label>
+            <div class="model-select-row">
+              <select id="model-select" class="form-select">
+                <option value="">Loading models...</option>
+              </select>
+              <button class="btn btn-secondary btn-sm" id="btn-reload-model">Switch</button>
+            </div>
+          </div>
+        </div>
+
+        <button class="btn btn-primary btn-generate" id="btn-generate">
+          <span class="btn-spinner hidden" id="generate-spinner"></span>
+          <span class="btn-text" id="generate-btn-text">✨ Generate Image</span>
+        </button>
+      </section>
+
+      <!-- Right Panel: Viewport & Inspection -->
+      <section class="panel viewport-panel">
+        <div class="viewport-header">
+          <div class="viewport-title">Canvas Output</div>
+          <div class="viewport-toolbar">
+            <div class="btn-group zoom-group">
+              <button class="btn btn-tool" data-zoom="1">1×</button>
+              <button class="btn btn-tool" data-zoom="4">4×</button>
+              <button class="btn btn-tool active" data-zoom="8">8×</button>
+              <button class="btn btn-tool" data-zoom="10">10×</button>
+            </div>
+            <button class="btn btn-tool" id="btn-toggle-rendering" title="Toggle Crisp Pixel Art vs Smooth Interpolation">👾 Pixelated</button>
+          </div>
+        </div>
+
+        <div class="canvas-stage" id="canvas-stage">
+          <div class="canvas-placeholder" id="canvas-placeholder">
+            <div class="placeholder-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+            </div>
+            <p>Ready to synthesize.<br>Click <strong>Generate Image</strong> to run diffusion.</p>
+          </div>
+          <div class="generation-overlay hidden" id="generation-overlay">
+            <div class="pulsing-halo"></div>
+            <div class="generation-status-box">
+              <div class="spinner-large"></div>
+              <div class="gen-title">Reverse Diffusion in Progress</div>
+              <div class="gen-subtitle">Computing trajectory across timesteps...</div>
+              <div class="gen-timer" id="gen-timer">0.00 s</div>
+            </div>
+          </div>
+          <canvas id="main-canvas" width="32" height="32" class="pixelated hidden"></canvas>
+        </div>
+
+        <!-- Metrics display -->
+        <div class="metrics-grid hidden" id="metrics-grid">
+          <div class="metric-card">
+            <div class="metric-label">Latency</div>
+            <div class="metric-value highlight" id="metric-latency">0 ms</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Sampler</div>
+            <div class="metric-value" id="metric-sampler">DDIM</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Steps</div>
+            <div class="metric-value" id="metric-steps">25</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Seed</div>
+            <div class="metric-value" id="metric-seed">0</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Resolution</div>
+            <div class="metric-value" id="metric-res">32 × 32</div>
+          </div>
+        </div>
+
+        <div class="viewport-footer hidden" id="viewport-footer">
+          <button class="btn btn-primary btn-sm" id="btn-download-png">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download PNG
+          </button>
+          <button class="btn btn-secondary btn-sm" id="btn-copy-base64">Copy Base64</button>
+        </div>
+      </section>
+    </main>
+
+    <!-- Bottom: History Gallery -->
+    <section class="panel history-panel">
+      <div class="history-header">
+        <div class="history-title-row">
+          <h3>Generation History</h3>
+          <span class="history-count" id="history-count">(0 items)</span>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btn-clear-history">Clear History</button>
+      </div>
+      <div class="history-grid" id="history-grid">
+        <div class="history-empty" id="history-empty">No images generated in this session yet.</div>
+      </div>
+    </section>
+
+    <!-- Telemetry Modal -->
+    <div class="modal-backdrop hidden" id="telemetry-modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>System Hardware & Telemetry</h3>
+          <button class="modal-close" id="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="telemetry-table" id="telemetry-table">
+            <div class="telem-row"><span class="telem-k">System Status</span><span class="telem-v" id="telem-status">-</span></div>
+            <div class="telem-row"><span class="telem-k">Host Processor</span><span class="telem-v" id="telem-device">-</span></div>
+            <div class="telem-row"><span class="telem-k">Compute Backend</span><span class="telem-v" id="telem-backend">-</span></div>
+            <div class="telem-row"><span class="telem-k">Active Model</span><span class="telem-v" id="telem-model">-</span></div>
+            <div class="telem-row"><span class="telem-k">Model Parameters</span><span class="telem-v" id="telem-params">-</span></div>
+            <div class="telem-row"><span class="telem-k">Working Set Memory</span><span class="telem-v" id="telem-memory">-</span></div>
+            <div class="telem-row"><span class="telem-k">Server Uptime</span><span class="telem-v" id="telem-uptime">-</span></div>
+            <div class="telem-row"><span class="telem-k">Total Generations</span><span class="telem-v" id="telem-gens">-</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

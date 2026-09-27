@@ -172,7 +172,25 @@ tensor::Tensor GaussianDiffusion::p_sample_step(
     tensor::Tensor noise = (t > 0) ? (z.is_empty() ? tensor::Tensor::randn(x_t.shape(), 0.0f, 1.0f) : z) : tensor::Tensor{};
     const float_t* z_ptr = noise.is_empty() ? nullptr : noise.data();
 
-    for (dim_t i = 0; i < numel; ++i) {
+    dim_t i = 0;
+#if defined(__AVX2__)
+    __m256 v_inv_sqrt_a = _mm256_set1_ps(1.0f / sqrt_a);
+    __m256 v_coeff_eps = _mm256_set1_ps(coeff_eps);
+    __m256 v_sigma = _mm256_set1_ps(sigma);
+
+    for (; i + 8 <= numel; i += 8) {
+        __m256 vx = _mm256_loadu_ps(xt_ptr + i);
+        __m256 ve = _mm256_loadu_ps(ep_ptr + i);
+        __m256 vdiff = _mm256_fnmadd_ps(v_coeff_eps, ve, vx); // vx - coeff_eps * ve
+        __m256 vmean = _mm256_mul_ps(v_inv_sqrt_a, vdiff);
+        if (t > 0 && z_ptr) {
+            __m256 vz = _mm256_loadu_ps(z_ptr + i);
+            vmean = _mm256_fmadd_ps(v_sigma, vz, vmean);
+        }
+        _mm256_storeu_ps(prev_ptr + i, vmean);
+    }
+#endif
+    for (; i < numel; ++i) {
         float_t mean = (1.0f / sqrt_a) * (xt_ptr[i] - coeff_eps * ep_ptr[i]);
         if (t > 0 && z_ptr) {
             prev_ptr[i] = mean + sigma * z_ptr[i];
@@ -213,12 +231,22 @@ tensor::Tensor GaussianDiffusion::ddim_step(
     const float_t* ep_ptr = eps_pred.data();
     float_t* out_ptr = x_out.data();
 
-    for (dim_t i = 0; i < numel; ++i) {
-        // Predicted x_0
-        float_t pred_x0 = (xt_ptr[i] - sqrt_1m_a_bar_cur * ep_ptr[i]) / sqrt_a_bar_cur;
-        // Direction pointing to x_t
-        float_t dir_xt = dir_coeff * ep_ptr[i];
-        out_ptr[i] = sqrt_a_bar_prev * pred_x0 + dir_xt;
+    float_t c_xt = sqrt_a_bar_prev / sqrt_a_bar_cur;
+    float_t c_ep = dir_coeff - (sqrt_a_bar_prev * sqrt_1m_a_bar_cur) / sqrt_a_bar_cur;
+
+    dim_t i = 0;
+#if defined(__AVX2__)
+    __m256 v_c_xt = _mm256_set1_ps(c_xt);
+    __m256 v_c_ep = _mm256_set1_ps(c_ep);
+    for (; i + 8 <= numel; i += 8) {
+        __m256 vx = _mm256_loadu_ps(xt_ptr + i);
+        __m256 ve = _mm256_loadu_ps(ep_ptr + i);
+        __m256 vout = _mm256_fmadd_ps(v_c_xt, vx, _mm256_mul_ps(v_c_ep, ve));
+        _mm256_storeu_ps(out_ptr + i, vout);
+    }
+#endif
+    for (; i < numel; ++i) {
+        out_ptr[i] = c_xt * xt_ptr[i] + c_ep * ep_ptr[i];
     }
 
     return x_out;

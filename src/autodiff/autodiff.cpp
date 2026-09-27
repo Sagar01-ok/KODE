@@ -472,8 +472,8 @@ Variable transpose(const Variable& a, dim_t dim0, dim_t dim1) {
             std::vector<Variable>{a},
             [a, dim0, dim1](const tensor::Tensor& grad_out) {
                 if (a->requires_grad()) {
-                    tensor::Tensor ga = grad_out.transpose(dim0, dim1);
-                    if (a->grad().is_empty()) a->grad() = ga.clone();
+                    tensor::Tensor ga = grad_out.transpose(dim0, dim1).contiguous();
+                    if (a->grad().is_empty()) a->grad() = ga;
                     else a->grad().add_(ga);
                 }
             },

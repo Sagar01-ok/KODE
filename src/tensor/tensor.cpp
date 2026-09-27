@@ -1,5 +1,6 @@
 #include "kode/tensor/tensor.hpp"
 #include "kode/core/logging.hpp"
+#include "kode/core/thread_pool.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
@@ -677,8 +678,9 @@ Tensor Tensor::add(const Tensor& other) const {
 }
 
 Tensor Tensor::add(float_t scalar) const {
+    Tensor contig = contiguous();
     Tensor res(shape_);
-    const float_t* a = data();
+    const float_t* a = contig.data();
     float_t* c = res.data();
     dim_t i = 0;
 #if defined(__AVX2__)
@@ -769,8 +771,9 @@ Tensor Tensor::mul(const Tensor& other) const {
 }
 
 Tensor Tensor::mul(float_t scalar) const {
+    Tensor contig = contiguous();
     Tensor res(shape_);
-    const float_t* a = data();
+    const float_t* a = contig.data();
     float_t* c = res.data();
     dim_t i = 0;
 #if defined(__AVX2__)
@@ -842,47 +845,373 @@ Tensor Tensor::neg() const {
 }
 
 // ---------------------------------------------------------------------------
+// SIMD AVX2 Fast Math & Vectorized Nonlinearities
+// ---------------------------------------------------------------------------
+#if defined(__AVX2__)
+namespace {
+
+inline __m256 simd_exp_ps(__m256 x) {
+    x = _mm256_max_ps(x, _mm256_set1_ps(-87.3f));
+    x = _mm256_min_ps(x, _mm256_set1_ps(88.7f));
+
+    const __m256 log2e = _mm256_set1_ps(1.4426950408889634f);
+    __m256 z = _mm256_mul_ps(x, log2e);
+
+    __m256i vk = _mm256_cvtps_epi32(z);
+    __m256 fk = _mm256_cvtepi32_ps(vk);
+
+    const __m256 c1 = _mm256_set1_ps(0.693145751953125f);
+    const __m256 c2 = _mm256_set1_ps(1.4286068203094172e-6f);
+    __m256 r = _mm256_sub_ps(x, _mm256_mul_ps(fk, c1));
+    r = _mm256_sub_ps(r, _mm256_mul_ps(fk, c2));
+
+    const __m256 p6 = _mm256_set1_ps(1.0f / 720.0f);
+    const __m256 p5 = _mm256_set1_ps(1.0f / 120.0f);
+    const __m256 p4 = _mm256_set1_ps(1.0f / 24.0f);
+    const __m256 p3 = _mm256_set1_ps(1.0f / 6.0f);
+    const __m256 p2 = _mm256_set1_ps(0.5f);
+    const __m256 p1 = _mm256_set1_ps(1.0f);
+
+    __m256 poly = _mm256_fmadd_ps(p6, r, p5);
+    poly = _mm256_fmadd_ps(poly, r, p4);
+    poly = _mm256_fmadd_ps(poly, r, p3);
+    poly = _mm256_fmadd_ps(poly, r, p2);
+    poly = _mm256_fmadd_ps(poly, r, p1);
+    poly = _mm256_fmadd_ps(poly, r, p1);
+
+    __m256i vi = _mm256_add_epi32(vk, _mm256_set1_epi32(127));
+    __m256i vscale = _mm256_slli_epi32(vi, 23);
+    __m256 scale = _mm256_castsi256_ps(vscale);
+
+    return _mm256_mul_ps(poly, scale);
+}
+
+inline __m256 simd_sigmoid_ps(__m256 x) {
+    __m256 one = _mm256_set1_ps(1.0f);
+    __m256 neg_x = _mm256_sub_ps(_mm256_setzero_ps(), x);
+    __m256 exp_neg_x = simd_exp_ps(neg_x);
+    __m256 denom = _mm256_add_ps(one, exp_neg_x);
+    return _mm256_div_ps(one, denom);
+}
+
+inline __m256 simd_silu_ps(__m256 x) {
+    __m256 sig = simd_sigmoid_ps(x);
+    return _mm256_mul_ps(x, sig);
+}
+
+inline __m256 simd_silu_backward_ps(__m256 x, __m256 dy) {
+    __m256 one = _mm256_set1_ps(1.0f);
+    __m256 sig = simd_sigmoid_ps(x);
+    __m256 sig_one_minus = _mm256_mul_ps(sig, _mm256_sub_ps(one, sig));
+    __m256 f_prime = _mm256_fmadd_ps(x, sig_one_minus, sig);
+    return _mm256_mul_ps(dy, f_prime);
+}
+
+} // anonymous namespace
+#endif
+
+// ---------------------------------------------------------------------------
+// Cache-Tiled High-Performance GEMM Microkernel
+// ---------------------------------------------------------------------------
+void gemm_cpu(const float_t* A, const float_t* B, float_t* C, dim_t m, dim_t k, dim_t n, bool accumulate) {
+    if (m <= 0 || k <= 0 || n <= 0) return;
+
+    dim_t MC = 32;
+    dim_t NC = (n <= 64) ? 32 : 64;
+
+    dim_t n_M = (m + MC - 1) / MC;
+    dim_t n_N = (n + NC - 1) / NC;
+    dim_t total_tiles = n_M * n_N;
+
+    auto process_tile = [A, B, C, m, k, n, accumulate, MC, NC, n_N](dim_t tile_idx) {
+        dim_t tm = tile_idx / n_N;
+        dim_t tn = tile_idx % n_N;
+
+        dim_t ic = tm * MC;
+        dim_t i_end = std::min(ic + MC, m);
+        dim_t jc = tn * NC;
+        dim_t j_end = std::min(jc + NC, n);
+
+        dim_t i = ic;
+#if defined(__AVX2__)
+        // Microkernel 4x16
+        for (; i + 4 <= i_end; i += 4) {
+            dim_t j = jc;
+            for (; j + 16 <= j_end; j += 16) {
+                __m256 c00 = _mm256_setzero_ps();
+                __m256 c01 = _mm256_setzero_ps();
+                __m256 c10 = _mm256_setzero_ps();
+                __m256 c11 = _mm256_setzero_ps();
+                __m256 c20 = _mm256_setzero_ps();
+                __m256 c21 = _mm256_setzero_ps();
+                __m256 c30 = _mm256_setzero_ps();
+                __m256 c31 = _mm256_setzero_ps();
+
+                for (dim_t p = 0; p < k; ++p) {
+                    __m256 b0 = _mm256_loadu_ps(B + p * n + j);
+                    __m256 b1 = _mm256_loadu_ps(B + p * n + j + 8);
+
+                    __m256 a0 = _mm256_set1_ps(A[(i + 0) * k + p]);
+                    c00 = _mm256_fmadd_ps(a0, b0, c00);
+                    c01 = _mm256_fmadd_ps(a0, b1, c01);
+
+                    __m256 a1 = _mm256_set1_ps(A[(i + 1) * k + p]);
+                    c10 = _mm256_fmadd_ps(a1, b0, c10);
+                    c11 = _mm256_fmadd_ps(a1, b1, c11);
+
+                    __m256 a2 = _mm256_set1_ps(A[(i + 2) * k + p]);
+                    c20 = _mm256_fmadd_ps(a2, b0, c20);
+                    c21 = _mm256_fmadd_ps(a2, b1, c21);
+
+                    __m256 a3 = _mm256_set1_ps(A[(i + 3) * k + p]);
+                    c30 = _mm256_fmadd_ps(a3, b0, c30);
+                    c31 = _mm256_fmadd_ps(a3, b1, c31);
+                }
+
+                if (accumulate) {
+                    _mm256_storeu_ps(C + (i + 0) * n + j,     _mm256_add_ps(_mm256_loadu_ps(C + (i + 0) * n + j), c00));
+                    _mm256_storeu_ps(C + (i + 0) * n + j + 8, _mm256_add_ps(_mm256_loadu_ps(C + (i + 0) * n + j + 8), c01));
+                    _mm256_storeu_ps(C + (i + 1) * n + j,     _mm256_add_ps(_mm256_loadu_ps(C + (i + 1) * n + j), c10));
+                    _mm256_storeu_ps(C + (i + 1) * n + j + 8, _mm256_add_ps(_mm256_loadu_ps(C + (i + 1) * n + j + 8), c11));
+                    _mm256_storeu_ps(C + (i + 2) * n + j,     _mm256_add_ps(_mm256_loadu_ps(C + (i + 2) * n + j), c20));
+                    _mm256_storeu_ps(C + (i + 2) * n + j + 8, _mm256_add_ps(_mm256_loadu_ps(C + (i + 2) * n + j + 8), c21));
+                    _mm256_storeu_ps(C + (i + 3) * n + j,     _mm256_add_ps(_mm256_loadu_ps(C + (i + 3) * n + j), c30));
+                    _mm256_storeu_ps(C + (i + 3) * n + j + 8, _mm256_add_ps(_mm256_loadu_ps(C + (i + 3) * n + j + 8), c31));
+                } else {
+                    _mm256_storeu_ps(C + (i + 0) * n + j,     c00);
+                    _mm256_storeu_ps(C + (i + 0) * n + j + 8, c01);
+                    _mm256_storeu_ps(C + (i + 1) * n + j,     c10);
+                    _mm256_storeu_ps(C + (i + 1) * n + j + 8, c11);
+                    _mm256_storeu_ps(C + (i + 2) * n + j,     c20);
+                    _mm256_storeu_ps(C + (i + 2) * n + j + 8, c21);
+                    _mm256_storeu_ps(C + (i + 3) * n + j,     c30);
+                    _mm256_storeu_ps(C + (i + 3) * n + j + 8, c31);
+                }
+            }
+
+            // Microkernel 4x8 for remaining columns
+            for (; j + 8 <= j_end; j += 8) {
+                __m256 c0 = _mm256_setzero_ps();
+                __m256 c1 = _mm256_setzero_ps();
+                __m256 c2 = _mm256_setzero_ps();
+                __m256 c3 = _mm256_setzero_ps();
+
+                for (dim_t p = 0; p < k; ++p) {
+                    __m256 b = _mm256_loadu_ps(B + p * n + j);
+                    c0 = _mm256_fmadd_ps(_mm256_set1_ps(A[(i + 0) * k + p]), b, c0);
+                    c1 = _mm256_fmadd_ps(_mm256_set1_ps(A[(i + 1) * k + p]), b, c1);
+                    c2 = _mm256_fmadd_ps(_mm256_set1_ps(A[(i + 2) * k + p]), b, c2);
+                    c3 = _mm256_fmadd_ps(_mm256_set1_ps(A[(i + 3) * k + p]), b, c3);
+                }
+
+                if (accumulate) {
+                    _mm256_storeu_ps(C + (i + 0) * n + j, _mm256_add_ps(_mm256_loadu_ps(C + (i + 0) * n + j), c0));
+                    _mm256_storeu_ps(C + (i + 1) * n + j, _mm256_add_ps(_mm256_loadu_ps(C + (i + 1) * n + j), c1));
+                    _mm256_storeu_ps(C + (i + 2) * n + j, _mm256_add_ps(_mm256_loadu_ps(C + (i + 2) * n + j), c2));
+                    _mm256_storeu_ps(C + (i + 3) * n + j, _mm256_add_ps(_mm256_loadu_ps(C + (i + 3) * n + j), c3));
+                } else {
+                    _mm256_storeu_ps(C + (i + 0) * n + j, c0);
+                    _mm256_storeu_ps(C + (i + 1) * n + j, c1);
+                    _mm256_storeu_ps(C + (i + 2) * n + j, c2);
+                    _mm256_storeu_ps(C + (i + 3) * n + j, c3);
+                }
+            }
+
+            // Microkernel 4x1 for remaining columns < 8
+            for (; j < j_end; ++j) {
+                float_t sum0 = 0.0f, sum1 = 0.0f, sum2 = 0.0f, sum3 = 0.0f;
+                for (dim_t p = 0; p < k; ++p) {
+                    float_t bp = B[p * n + j];
+                    sum0 += A[(i + 0) * k + p] * bp;
+                    sum1 += A[(i + 1) * k + p] * bp;
+                    sum2 += A[(i + 2) * k + p] * bp;
+                    sum3 += A[(i + 3) * k + p] * bp;
+                }
+                if (accumulate) {
+                    C[(i + 0) * n + j] += sum0;
+                    C[(i + 1) * n + j] += sum1;
+                    C[(i + 2) * n + j] += sum2;
+                    C[(i + 3) * n + j] += sum3;
+                } else {
+                    C[(i + 0) * n + j] = sum0;
+                    C[(i + 1) * n + j] = sum1;
+                    C[(i + 2) * n + j] = sum2;
+                    C[(i + 3) * n + j] = sum3;
+                }
+            }
+        }
+
+        // Handle remaining rows < 4
+        for (; i < i_end; ++i) {
+            dim_t j = jc;
+            for (; j + 16 <= j_end; j += 16) {
+                __m256 c0 = _mm256_setzero_ps();
+                __m256 c1 = _mm256_setzero_ps();
+                for (dim_t p = 0; p < k; ++p) {
+                    __m256 a = _mm256_set1_ps(A[i * k + p]);
+                    c0 = _mm256_fmadd_ps(a, _mm256_loadu_ps(B + p * n + j), c0);
+                    c1 = _mm256_fmadd_ps(a, _mm256_loadu_ps(B + p * n + j + 8), c1);
+                }
+                if (accumulate) {
+                    _mm256_storeu_ps(C + i * n + j,     _mm256_add_ps(_mm256_loadu_ps(C + i * n + j), c0));
+                    _mm256_storeu_ps(C + i * n + j + 8, _mm256_add_ps(_mm256_loadu_ps(C + i * n + j + 8), c1));
+                } else {
+                    _mm256_storeu_ps(C + i * n + j,     c0);
+                    _mm256_storeu_ps(C + i * n + j + 8, c1);
+                }
+            }
+            for (; j + 8 <= j_end; j += 8) {
+                __m256 c0 = _mm256_setzero_ps();
+                for (dim_t p = 0; p < k; ++p) {
+                    __m256 a = _mm256_set1_ps(A[i * k + p]);
+                    c0 = _mm256_fmadd_ps(a, _mm256_loadu_ps(B + p * n + j), c0);
+                }
+                if (accumulate) {
+                    _mm256_storeu_ps(C + i * n + j, _mm256_add_ps(_mm256_loadu_ps(C + i * n + j), c0));
+                } else {
+                    _mm256_storeu_ps(C + i * n + j, c0);
+                }
+            }
+            for (; j < j_end; ++j) {
+                float_t sum = 0.0f;
+                for (dim_t p = 0; p < k; ++p) {
+                    sum += A[i * k + p] * B[p * n + j];
+                }
+                if (accumulate) {
+                    C[i * n + j] += sum;
+                } else {
+                    C[i * n + j] = sum;
+                }
+            }
+        }
+#else
+        for (; i < i_end; ++i) {
+            for (dim_t j = jc; j < j_end; ++j) {
+                float_t sum = 0.0f;
+                for (dim_t p = 0; p < k; ++p) {
+                    sum += A[i * k + p] * B[p * n + j];
+                }
+                if (accumulate) {
+                    C[i * n + j] += sum;
+                } else {
+                    C[i * n + j] = sum;
+                }
+            }
+        }
+#endif
+    };
+
+    if (total_tiles > 1 && m * n * k >= 16384) {
+        core::ThreadPool::default_pool().parallel_for(0, total_tiles, process_tile, 1);
+    } else {
+        for (dim_t t = 0; t < total_tiles; ++t) {
+            process_tile(t);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Nonlinearities
 // ---------------------------------------------------------------------------
 Tensor Tensor::silu() const {
+    Tensor contig = contiguous();
     Tensor res(shape_);
-    const float_t* x = data();
+    const float_t* x = contig.data();
     float_t* y = res.data();
-    for (dim_t i = 0; i < numel_; ++i) {
-        float_t xi = x[i];
-        float_t sig = 1.0f / (1.0f + std::exp(-xi));
-        y[i] = xi * sig;
+    dim_t n = numel_;
+
+    auto compute_chunk = [x, y](dim_t start, dim_t end) {
+        dim_t i = start;
+#if defined(__AVX2__)
+        for (; i + 8 <= end; i += 8) {
+            __m256 vx = _mm256_loadu_ps(x + i);
+            __m256 vy = simd_silu_ps(vx);
+            _mm256_storeu_ps(y + i, vy);
+        }
+#endif
+        for (; i < end; ++i) {
+            float_t xi = x[i];
+            float_t sig = 1.0f / (1.0f + std::exp(-xi));
+            y[i] = xi * sig;
+        }
+    };
+
+    if (n >= 32768) {
+        core::ThreadPool::default_pool().parallel_for_range(0, n, compute_chunk, 8192);
+    } else {
+        compute_chunk(0, n);
     }
     return res;
 }
 
 Tensor Tensor::silu_backward(const Tensor& grad_output) const {
+    Tensor contig = contiguous();
+    Tensor dy_contig = grad_output.contiguous();
     Tensor grad_input(shape_);
-    const float_t* x = data();
-    const float_t* dy = grad_output.data();
+    const float_t* x = contig.data();
+    const float_t* dy = dy_contig.data();
     float_t* dx = grad_input.data();
-    for (dim_t i = 0; i < numel_; ++i) {
-        float_t xi = x[i];
-        float_t sig = 1.0f / (1.0f + std::exp(-xi));
-        float_t f_prime = sig + xi * sig * (1.0f - sig);
-        dx[i] = dy[i] * f_prime;
+    dim_t n = numel_;
+
+    auto compute_chunk = [x, dy, dx](dim_t start, dim_t end) {
+        dim_t i = start;
+#if defined(__AVX2__)
+        for (; i + 8 <= end; i += 8) {
+            __m256 vx = _mm256_loadu_ps(x + i);
+            __m256 vdy = _mm256_loadu_ps(dy + i);
+            __m256 vdx = simd_silu_backward_ps(vx, vdy);
+            _mm256_storeu_ps(dx + i, vdx);
+        }
+#endif
+        for (; i < end; ++i) {
+            float_t xi = x[i];
+            float_t sig = 1.0f / (1.0f + std::exp(-xi));
+            float_t f_prime = sig + xi * sig * (1.0f - sig);
+            dx[i] = dy[i] * f_prime;
+        }
+    };
+
+    if (n >= 32768) {
+        core::ThreadPool::default_pool().parallel_for_range(0, n, compute_chunk, 8192);
+    } else {
+        compute_chunk(0, n);
     }
     return grad_input;
 }
 
 Tensor Tensor::sigmoid() const {
+    Tensor contig = contiguous();
     Tensor res(shape_);
-    const float_t* x = data();
+    const float_t* x = contig.data();
     float_t* y = res.data();
-    for (dim_t i = 0; i < numel_; ++i) {
-        y[i] = 1.0f / (1.0f + std::exp(-x[i]));
+    dim_t n = numel_;
+
+    auto compute_chunk = [x, y](dim_t start, dim_t end) {
+        dim_t i = start;
+#if defined(__AVX2__)
+        for (; i + 8 <= end; i += 8) {
+            __m256 vx = _mm256_loadu_ps(x + i);
+            __m256 vy = simd_sigmoid_ps(vx);
+            _mm256_storeu_ps(y + i, vy);
+        }
+#endif
+        for (; i < end; ++i) {
+            y[i] = 1.0f / (1.0f + std::exp(-x[i]));
+        }
+    };
+
+    if (n >= 32768) {
+        core::ThreadPool::default_pool().parallel_for_range(0, n, compute_chunk, 8192);
+    } else {
+        compute_chunk(0, n);
     }
     return res;
 }
 
 Tensor Tensor::tanh() const {
+    Tensor contig = contiguous();
     Tensor res(shape_);
-    const float_t* x = data();
+    const float_t* x = contig.data();
     float_t* y = res.data();
     for (dim_t i = 0; i < numel_; ++i) {
         y[i] = std::tanh(x[i]);
@@ -891,18 +1220,38 @@ Tensor Tensor::tanh() const {
 }
 
 Tensor Tensor::relu() const {
+    Tensor contig = contiguous();
     Tensor res(shape_);
-    const float_t* x = data();
+    const float_t* x = contig.data();
     float_t* y = res.data();
-    for (dim_t i = 0; i < numel_; ++i) {
-        y[i] = std::max(0.0f, x[i]);
+    dim_t n = numel_;
+
+    auto compute_chunk = [x, y](dim_t start, dim_t end) {
+        dim_t i = start;
+#if defined(__AVX2__)
+        __m256 zero = _mm256_setzero_ps();
+        for (; i + 8 <= end; i += 8) {
+            __m256 vx = _mm256_loadu_ps(x + i);
+            _mm256_storeu_ps(y + i, _mm256_max_ps(vx, zero));
+        }
+#endif
+        for (; i < end; ++i) {
+            y[i] = std::max(0.0f, x[i]);
+        }
+    };
+
+    if (n >= 32768) {
+        core::ThreadPool::default_pool().parallel_for_range(0, n, compute_chunk, 8192);
+    } else {
+        compute_chunk(0, n);
     }
     return res;
 }
 
 Tensor Tensor::pow(float_t exponent) const {
+    Tensor contig = contiguous();
     Tensor res(shape_);
-    const float_t* x = data();
+    const float_t* x = contig.data();
     float_t* y = res.data();
     for (dim_t i = 0; i < numel_; ++i) {
         y[i] = std::pow(x[i], exponent);
@@ -911,8 +1260,9 @@ Tensor Tensor::pow(float_t exponent) const {
 }
 
 Tensor Tensor::sqrt() const {
+    Tensor contig = contiguous();
     Tensor res(shape_);
-    const float_t* x = data();
+    const float_t* x = contig.data();
     float_t* y = res.data();
     for (dim_t i = 0; i < numel_; ++i) {
         y[i] = std::sqrt(x[i]);
@@ -921,8 +1271,9 @@ Tensor Tensor::sqrt() const {
 }
 
 Tensor Tensor::exp() const {
+    Tensor contig = contiguous();
     Tensor res(shape_);
-    const float_t* x = data();
+    const float_t* x = contig.data();
     float_t* y = res.data();
     for (dim_t i = 0; i < numel_; ++i) {
         y[i] = std::exp(x[i]);
@@ -931,8 +1282,9 @@ Tensor Tensor::exp() const {
 }
 
 Tensor Tensor::log() const {
+    Tensor contig = contiguous();
     Tensor res(shape_);
-    const float_t* x = data();
+    const float_t* x = contig.data();
     float_t* y = res.data();
     for (dim_t i = 0; i < numel_; ++i) {
         y[i] = std::log(x[i]);
@@ -950,7 +1302,6 @@ Tensor Tensor::clamp(float_t min_val, float_t max_val) const {
 // Linear Algebra: Cache-Tiled GEMM
 // ---------------------------------------------------------------------------
 Tensor Tensor::matmul(const Tensor& other) const {
-    // 2D Matrix multiplication: (M, K) x (K, N) -> (M, N)
     if (ndim() < 2 || other.ndim() < 2) {
         throw std::invalid_argument("Matmul requires tensors with rank >= 2.");
     }
@@ -964,54 +1315,12 @@ Tensor Tensor::matmul(const Tensor& other) const {
         throw std::invalid_argument("Inner dimensions must match for matmul.");
     }
 
-    // Handle batched GEMM if ndim > 2
     if (ndim() == 2 && other.ndim() == 2) {
         Tensor a_c = contiguous();
         Tensor b_c = other.contiguous();
         Tensor c({m, n}, 0.0f);
 
-        const float_t* A = a_c.data();
-        const float_t* B = b_c.data();
-        float_t* C = c.data();
-
-        // 3-Level Cache Tiling constants
-        constexpr dim_t MC = 64;
-        constexpr dim_t KC = 64;
-        constexpr dim_t NC = 64;
-
-        for (dim_t jc = 0; jc < n; jc += NC) {
-            dim_t j_end = std::min(jc + NC, n);
-            for (dim_t kc = 0; kc < k; kc += KC) {
-                dim_t k_end = std::min(kc + KC, k);
-                for (dim_t ic = 0; ic < m; ic += MC) {
-                    dim_t i_end = std::min(ic + MC, m);
-
-                    // Inner Microkernel with AVX2
-                    for (dim_t i = ic; i < i_end; ++i) {
-                        for (dim_t p = kc; p < k_end; ++p) {
-                            float_t a_ip = A[i * k + p];
-#if defined(__AVX2__)
-                            __m256 va = _mm256_set1_ps(a_ip);
-                            dim_t j = jc;
-                            for (; j + 8 <= j_end; j += 8) {
-                                __m256 vb = _mm256_loadu_ps(B + p * n + j);
-                                __m256 vc = _mm256_loadu_ps(C + i * n + j);
-                                vc = _mm256_fmadd_ps(va, vb, vc);
-                                _mm256_storeu_ps(C + i * n + j, vc);
-                            }
-                            for (; j < j_end; ++j) {
-                                C[i * n + j] += a_ip * B[p * n + j];
-                            }
-#else
-                            for (dim_t j = jc; j < j_end; ++j) {
-                                C[i * n + j] += a_ip * B[p * n + j];
-                            }
-#endif
-                        }
-                    }
-                }
-            }
-        }
+        gemm_cpu(a_c.data(), b_c.data(), c.data(), m, k, n, false);
         return c;
     }
 
@@ -1035,33 +1344,18 @@ Tensor Tensor::matmul(const Tensor& other) const {
     dim_t b_stride_batch = (other.ndim() > 2) ? (k * n) : 0;
     dim_t c_stride_batch = m * n;
 
-    for (dim_t b = 0; b < batch_size; ++b) {
-        const float_t* A = a_c.data() + b * a_stride_batch;
-        const float_t* B = b_c.data() + b * b_stride_batch;
-        float_t* C = c.data() + b * c_stride_batch;
-
-        for (dim_t i = 0; i < m; ++i) {
-            for (dim_t p = 0; p < k; ++p) {
-                float_t a_ip = A[i * k + p];
-#if defined(__AVX2__)
-                __m256 va = _mm256_set1_ps(a_ip);
-                dim_t j = 0;
-                for (; j + 8 <= n; j += 8) {
-                    __m256 vb = _mm256_loadu_ps(B + p * n + j);
-                    __m256 vc = _mm256_loadu_ps(C + i * n + j);
-                    vc = _mm256_fmadd_ps(va, vb, vc);
-                    _mm256_storeu_ps(C + i * n + j, vc);
-                }
-                for (; j < n; ++j) {
-                    C[i * n + j] += a_ip * B[p * n + j];
-                }
-#else
-                for (dim_t j = 0; j < n; ++j) {
-                    C[i * n + j] += a_ip * B[p * n + j];
-                }
-#endif
-            }
-        }
+    if (batch_size > 1) {
+        core::ThreadPool::default_pool().parallel_for(0, batch_size, [&](dim_t b) {
+            const float_t* A = a_c.data() + b * a_stride_batch;
+            const float_t* B = b_c.data() + b * b_stride_batch;
+            float_t* C = c.data() + b * c_stride_batch;
+            gemm_cpu(A, B, C, m, k, n, false);
+        });
+    } else {
+        const float_t* A = a_c.data();
+        const float_t* B = b_c.data();
+        float_t* C = c.data();
+        gemm_cpu(A, B, C, m, k, n, false);
     }
     return c;
 }
@@ -1072,8 +1366,9 @@ Tensor Tensor::matmul(const Tensor& other) const {
 Tensor Tensor::sum(dim_t dim, bool keepdim) const {
     if (dim == -1) {
         // Global sum
+        Tensor contig = contiguous();
         float_t total = 0.0f;
-        const float_t* p = data();
+        const float_t* p = contig.data();
         dim_t i = 0;
 #if defined(__AVX2__)
         __m256 vsum = _mm256_setzero_ps();
@@ -1194,30 +1489,37 @@ Tensor Tensor::im2col(dim_t kernel_h, dim_t kernel_w, dim_t stride_h, dim_t stri
     const float_t* src = in_contig.data();
     float_t* dst = col.data();
 
-    for (dim_t n = 0; n < b; ++n) {
+    auto process_channel = [&](dim_t task) {
+        dim_t n = task / c;
+        dim_t c_idx = task % c;
         const float_t* src_b = src + n * (c * h * w);
         float_t* dst_b = dst + n * (channels_col * spatial_col);
 
-        for (dim_t c_idx = 0; c_idx < c; ++c_idx) {
-            for (dim_t kh = 0; kh < kernel_h; ++kh) {
-                for (dim_t kw = 0; kw < kernel_w; ++kw) {
-                    dim_t col_row = c_idx * (kernel_h * kernel_w) + kh * kernel_w + kw;
-                    float_t* dst_row = dst_b + col_row * spatial_col;
+        for (dim_t kh = 0; kh < kernel_h; ++kh) {
+            for (dim_t kw = 0; kw < kernel_w; ++kw) {
+                dim_t col_row = c_idx * (kernel_h * kernel_w) + kh * kernel_w + kw;
+                float_t* dst_row = dst_b + col_row * spatial_col;
 
-                    for (dim_t oh = 0; oh < out_h; ++oh) {
-                        dim_t ih = oh * stride_h - pad_h + kh * dilation_h;
-                        for (dim_t ow = 0; ow < out_w; ++ow) {
-                            dim_t iw = ow * stride_w - pad_w + kw * dilation_w;
-                            if (ih >= 0 && ih < h && iw >= 0 && iw < w) {
-                                dst_row[oh * out_w + ow] = src_b[(c_idx * h + ih) * w + iw];
-                            } else {
-                                dst_row[oh * out_w + ow] = 0.0f;
-                            }
+                for (dim_t oh = 0; oh < out_h; ++oh) {
+                    dim_t ih = oh * stride_h - pad_h + kh * dilation_h;
+                    for (dim_t ow = 0; ow < out_w; ++ow) {
+                        dim_t iw = ow * stride_w - pad_w + kw * dilation_w;
+                        if (ih >= 0 && ih < h && iw >= 0 && iw < w) {
+                            dst_row[oh * out_w + ow] = src_b[(c_idx * h + ih) * w + iw];
+                        } else {
+                            dst_row[oh * out_w + ow] = 0.0f;
                         }
                     }
                 }
             }
         }
+    };
+
+    dim_t total_tasks = b * c;
+    if (total_tasks > 1) {
+        core::ThreadPool::default_pool().parallel_for(0, total_tasks, process_channel, 2);
+    } else {
+        process_channel(0);
     }
     return col;
 }
@@ -1245,28 +1547,35 @@ Tensor Tensor::col2im(const Tensor& col, const Shape& output_shape,
     const float_t* col_data = col_contig.data();
     float_t* im_data = im.data();
 
-    for (dim_t n = 0; n < b; ++n) {
+    auto process_channel = [&](dim_t task) {
+        dim_t n = task / c;
+        dim_t c_idx = task % c;
         float_t* im_b = im_data + n * (c * h * w);
         const float_t* col_b = col_data + n * (channels_col * spatial_col);
 
-        for (dim_t c_idx = 0; c_idx < c; ++c_idx) {
-            for (dim_t kh = 0; kh < kernel_h; ++kh) {
-                for (dim_t kw = 0; kw < kernel_w; ++kw) {
-                    dim_t col_row = c_idx * (kernel_h * kernel_w) + kh * kernel_w + kw;
-                    const float_t* col_row_data = col_b + col_row * spatial_col;
+        for (dim_t kh = 0; kh < kernel_h; ++kh) {
+            for (dim_t kw = 0; kw < kernel_w; ++kw) {
+                dim_t col_row = c_idx * (kernel_h * kernel_w) + kh * kernel_w + kw;
+                const float_t* col_row_data = col_b + col_row * spatial_col;
 
-                    for (dim_t oh = 0; oh < out_h; ++oh) {
-                        dim_t ih = oh * stride_h - pad_h + kh * dilation_h;
-                        for (dim_t ow = 0; ow < out_w; ++ow) {
-                            dim_t iw = ow * stride_w - pad_w + kw * dilation_w;
-                            if (ih >= 0 && ih < h && iw >= 0 && iw < w) {
-                                im_b[(c_idx * h + ih) * w + iw] += col_row_data[oh * out_w + ow];
-                            }
+                for (dim_t oh = 0; oh < out_h; ++oh) {
+                    dim_t ih = oh * stride_h - pad_h + kh * dilation_h;
+                    for (dim_t ow = 0; ow < out_w; ++ow) {
+                        dim_t iw = ow * stride_w - pad_w + kw * dilation_w;
+                        if (ih >= 0 && ih < h && iw >= 0 && iw < w) {
+                            im_b[(c_idx * h + ih) * w + iw] += col_row_data[oh * out_w + ow];
                         }
                     }
                 }
             }
         }
+    };
+
+    dim_t total_tasks = b * c;
+    if (total_tasks > 1) {
+        core::ThreadPool::default_pool().parallel_for(0, total_tasks, process_channel, 2);
+    } else {
+        process_channel(0);
     }
     return im;
 }

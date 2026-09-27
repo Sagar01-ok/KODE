@@ -290,4 +290,76 @@ tensor::Tensor random_flip_horizontal(const tensor::Tensor& input, float prob, u
     return input.clone();
 }
 
+static void stbi_memory_write_cb(void* context, void* data, int size) {
+    if (size > 0 && data != nullptr) {
+        auto* vec = static_cast<std::vector<uint8_t>*>(context);
+        const auto* bytes = static_cast<const uint8_t*>(data);
+        vec->insert(vec->end(), bytes, bytes + size);
+    }
+}
+
+std::vector<uint8_t> encode_png_memory(const tensor::Tensor& image, dim_t batch_index) {
+    const Shape& shp = image.shape();
+    dim_t c = 0, h = 0, w = 0;
+    if (shp.size() == 3) {
+        c = shp[0];
+        h = shp[1];
+        w = shp[2];
+    } else if (shp.size() == 4) {
+        c = shp[1];
+        h = shp[2];
+        w = shp[3];
+    } else {
+        throw std::invalid_argument("encode_png_memory expects 3D (C, H, W) or 4D (B, C, H, W) tensor.");
+    }
+
+    std::vector<uint8_t> raw = chw_tensor_to_hwc_uint8(image, batch_index);
+    std::vector<uint8_t> out_png;
+    int stride = static_cast<int>(w * c);
+    int res = stbi_write_png_to_func(
+        stbi_memory_write_cb,
+        &out_png,
+        static_cast<int>(w),
+        static_cast<int>(h),
+        static_cast<int>(c),
+        raw.data(),
+        stride
+    );
+    if (!res) {
+        throw std::runtime_error("stbi_write_png_to_func failed to encode PNG in memory.");
+    }
+    return out_png;
+}
+
+static const char BASE64_TABLE[] = 
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+std::string base64_encode(const uint8_t* data, size_t length) {
+    std::string encoded;
+    encoded.reserve(((length + 2) / 3) * 4);
+
+    size_t i = 0;
+    while (i < length) {
+        size_t remaining = length - i;
+        uint32_t octet_a = data[i++];
+        uint32_t octet_b = (remaining > 1) ? data[i++] : 0;
+        uint32_t octet_c = (remaining > 2) ? data[i++] : 0;
+
+        uint32_t triple = (octet_a << 16) | (octet_b << 8) | octet_c;
+
+        encoded.push_back(BASE64_TABLE[(triple >> 18) & 0x3F]);
+        encoded.push_back(BASE64_TABLE[(triple >> 12) & 0x3F]);
+        encoded.push_back((remaining > 1) ? BASE64_TABLE[(triple >> 6) & 0x3F] : '=');
+        encoded.push_back((remaining > 2) ? BASE64_TABLE[triple & 0x3F] : '=');
+    }
+
+    return encoded;
+}
+
+std::string encode_png_base64(const tensor::Tensor& image, dim_t batch_index) {
+    std::vector<uint8_t> png = encode_png_memory(image, batch_index);
+    return base64_encode(png.data(), png.size());
+}
+
 } // namespace kode::image
+

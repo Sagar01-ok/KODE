@@ -1,8 +1,11 @@
 #include "kode/nn/nn.hpp"
 #include "kode/core/logging.hpp"
+#include "kode/core/thread_pool.hpp"
 #include <cmath>
 
 namespace kode::nn {
+
+using tensor::gemm_cpu;
 
 // ---------------------------------------------------------------------------
 // Linear
@@ -86,19 +89,52 @@ Variable Conv2d::forward(const Variable& input) {
     tensor::Tensor w_mat = weight_->data().reshape({out_channels_, col_k});
 
     // Batched GEMM: (out_channels, col_k) x (B, col_k, col_spatial) -> (B, out_channels, col_spatial)
-    tensor::Tensor y_col({b, out_channels_, col_spatial}, 0.0f);
-    for (dim_t n = 0; n < b; ++n) {
-        tensor::Tensor x_col_b = x_col.slice(0, n, n + 1).squeeze(0); // (col_k, col_spatial)
-        tensor::Tensor y_col_b = w_mat.matmul(x_col_b);              // (out_channels, col_spatial)
-        std::memcpy(y_col.data() + n * (out_channels_ * col_spatial),
-                    y_col_b.data(),
-                    static_cast<size_t>(out_channels_ * col_spatial) * sizeof(float_t));
+    tensor::Tensor y_col({b, out_channels_, col_spatial});
+    const float_t* w_ptr = w_mat.data();
+    const float_t* x_col_ptr = x_col.data();
+    float_t* y_col_ptr = y_col.data();
+
+    auto process_sample = [&](dim_t n) {
+        const float_t* x_sample = x_col_ptr + n * (col_k * col_spatial);
+        float_t* y_sample = y_col_ptr + n * (out_channels_ * col_spatial);
+        gemm_cpu(w_ptr, x_sample, y_sample, out_channels_, col_k, col_spatial, false);
+    };
+
+    if (b > 1) {
+        core::ThreadPool::default_pool().parallel_for(0, b, process_sample);
+    } else {
+        process_sample(0);
     }
 
     tensor::Tensor y = y_col.reshape({b, out_channels_, h_out, w_out});
     if (has_bias_) {
-        tensor::Tensor b_expanded = bias_->data().reshape({1, out_channels_, 1, 1});
-        y.add_(b_expanded);
+        const float_t* b_data = bias_->data().data();
+        float_t* y_data = y.data();
+        dim_t spatial = h_out * w_out;
+
+        auto add_bias_sample = [&](dim_t n) {
+            for (dim_t oc = 0; oc < out_channels_; ++oc) {
+                float_t bias_val = b_data[oc];
+                float_t* out_ch_ptr = y_data + (n * out_channels_ + oc) * spatial;
+                dim_t i = 0;
+#if defined(__AVX2__)
+                __m256 vb = _mm256_set1_ps(bias_val);
+                for (; i + 8 <= spatial; i += 8) {
+                    __m256 vy = _mm256_loadu_ps(out_ch_ptr + i);
+                    _mm256_storeu_ps(out_ch_ptr + i, _mm256_add_ps(vy, vb));
+                }
+#endif
+                for (; i < spatial; ++i) {
+                    out_ch_ptr[i] += bias_val;
+                }
+            }
+        };
+
+        if (b > 1) {
+            core::ThreadPool::default_pool().parallel_for(0, b, add_bias_sample);
+        } else {
+            add_bias_sample(0);
+        }
     }
 
     bool req = (input->requires_grad() || weight_->requires_grad() || (has_bias_ && bias_->requires_grad()))
@@ -125,11 +161,21 @@ Variable Conv2d::forward(const Variable& input) {
                 // 1. Weight gradient: dL/dW_flat = sum_b (grad_y_col_b * x_col_b^T)
                 if (w_ref->requires_grad()) {
                     tensor::Tensor grad_w_mat({out_ch, col_k_dim}, 0.0f);
+                    const float_t* gy_ptr = grad_y_col.data();
+                    const float_t* xc_ptr = x_col.data();
+
+                    std::vector<float_t> xc_t(static_cast<size_t>(col_sp * col_k_dim));
                     for (dim_t n = 0; n < b; ++n) {
-                        tensor::Tensor gy_b = grad_y_col.slice(0, n, n + 1).squeeze(0); // (out_ch, col_sp)
-                        tensor::Tensor x_b = x_col.slice(0, n, n + 1).squeeze(0);       // (col_k, col_sp)
-                        tensor::Tensor gw_b = gy_b.matmul(x_b.transpose(0, 1));        // (out_ch, col_k)
-                        grad_w_mat.add_(gw_b);
+                        const float_t* x_b = xc_ptr + n * (col_k_dim * col_sp);
+                        const float_t* gy_b = gy_ptr + n * (out_ch * col_sp);
+
+                        for (dim_t r = 0; r < col_k_dim; ++r) {
+                            for (dim_t c = 0; c < col_sp; ++c) {
+                                xc_t[c * col_k_dim + r] = x_b[r * col_sp + c];
+                            }
+                        }
+
+                        gemm_cpu(gy_b, xc_t.data(), grad_w_mat.data(), out_ch, col_sp, col_k_dim, true);
                     }
                     tensor::Tensor grad_w = grad_w_mat.reshape(w_ref->shape());
                     if (w_ref->grad().is_empty()) w_ref->grad() = grad_w.clone();
@@ -138,23 +184,63 @@ Variable Conv2d::forward(const Variable& input) {
 
                 // 2. Bias gradient: sum over b, h, w
                 if (h_bias && b_ref->requires_grad()) {
-                    tensor::Tensor grad_b = grad_out.sum(0, false).sum(1, false).sum(1, false); // (out_ch)
+                    tensor::Tensor grad_b({out_ch}, 0.0f);
+                    float_t* gb_ptr = grad_b.data();
+                    const float_t* go_ptr = grad_out.data();
+                    dim_t spatial = h_out * w_out;
+
+                    for (dim_t oc = 0; oc < out_ch; ++oc) {
+                        float_t sum = 0.0f;
+                        for (dim_t n = 0; n < b; ++n) {
+                            const float_t* plane = go_ptr + (n * out_ch + oc) * spatial;
+                            dim_t i = 0;
+#if defined(__AVX2__)
+                            __m256 vsum = _mm256_setzero_ps();
+                            for (; i + 8 <= spatial; i += 8) {
+                                vsum = _mm256_add_ps(vsum, _mm256_loadu_ps(plane + i));
+                            }
+                            alignas(32) float_t tmp[8];
+                            _mm256_storeu_ps(tmp, vsum);
+                            for (int k = 0; k < 8; ++k) sum += tmp[k];
+#endif
+                            for (; i < spatial; ++i) {
+                                sum += plane[i];
+                            }
+                        }
+                        gb_ptr[oc] = sum;
+                    }
                     if (b_ref->grad().is_empty()) b_ref->grad() = grad_b.clone();
                     else b_ref->grad().add_(grad_b);
                 }
 
                 // 3. Input gradient: dL/dX_col = W_flat^T * grad_y_col, then col2im
                 if (input->requires_grad()) {
-                    tensor::Tensor w_mat_t = w_ref->data().reshape({out_ch, col_k_dim}).transpose(0, 1); // (col_k, out_ch)
-                    tensor::Tensor grad_x_col({b, col_k_dim, col_sp}, 0.0f);
-
-                    for (dim_t n = 0; n < b; ++n) {
-                        tensor::Tensor gy_b = grad_y_col.slice(0, n, n + 1).squeeze(0); // (out_ch, col_sp)
-                        tensor::Tensor gx_col_b = w_mat_t.matmul(gy_b);                 // (col_k, col_sp)
-                        std::memcpy(grad_x_col.data() + n * (col_k_dim * col_sp),
-                                    gx_col_b.data(),
-                                    static_cast<size_t>(col_k_dim * col_sp) * sizeof(float_t));
+                    tensor::Tensor w_mat = w_ref->data().reshape({out_ch, col_k_dim});
+                    tensor::Tensor w_mat_t({col_k_dim, out_ch});
+                    const float_t* w_ptr = w_mat.data();
+                    float_t* wt_ptr = w_mat_t.data();
+                    for (dim_t r = 0; r < out_ch; ++r) {
+                        for (dim_t c = 0; c < col_k_dim; ++c) {
+                            wt_ptr[c * out_ch + r] = w_ptr[r * col_k_dim + c];
+                        }
                     }
+
+                    tensor::Tensor grad_x_col({b, col_k_dim, col_sp});
+                    const float_t* gy_ptr = grad_y_col.data();
+                    float_t* gx_ptr = grad_x_col.data();
+
+                    auto process_in_grad = [&](dim_t n) {
+                        const float_t* gy_b = gy_ptr + n * (out_ch * col_sp);
+                        float_t* gx_b = gx_ptr + n * (col_k_dim * col_sp);
+                        gemm_cpu(wt_ptr, gy_b, gx_b, col_k_dim, out_ch, col_sp, false);
+                    };
+
+                    if (b > 1) {
+                        core::ThreadPool::default_pool().parallel_for(0, b, process_in_grad);
+                    } else {
+                        process_in_grad(0);
+                    }
+
                     tensor::Tensor grad_x = tensor::Tensor::col2im(grad_x_col, {b, c_in, h_in, w_in},
                                                                    ks, ks, st, st, pad, pad, dil, dil);
                     if (input->grad().is_empty()) input->grad() = grad_x.clone();
@@ -481,18 +567,71 @@ Variable AdaGN::forward_cond(const Variable& x, const Variable& cond) {
     Variable norm_x = norm_->forward(x);
     Variable mod = proj_->forward(cond); // (B, 2 * C)
 
-    Variable gamma = autodiff::reshape(autodiff::transpose(autodiff::reshape(mod, {b, 2, c}), 0, 1), {2, b, c});
-    Variable scale = autodiff::reshape(gamma, {2, b, c, 1, 1});
+    tensor::Tensor gamma_data({b, c}, 0.0f);
+    tensor::Tensor beta_data({b, c}, 0.0f);
 
-    // Unpack scale (gamma) and shift (beta)
-    tensor::Tensor scale_t = scale->data().slice(0, 0, 1).squeeze(0);
-    tensor::Tensor shift_t = scale->data().slice(0, 1, 2).squeeze(0);
+    const float_t* mod_ptr = mod->data().data();
+    float_t* g_ptr = gamma_data.data();
+    float_t* b_ptr = beta_data.data();
 
-    Variable gamma_var = autodiff::make_variable(std::move(scale_t), mod->requires_grad());
-    Variable beta_var = autodiff::make_variable(std::move(shift_t), mod->requires_grad());
+    for (dim_t i = 0; i < b; ++i) {
+        for (dim_t j = 0; j < c; ++j) {
+            g_ptr[i * c + j] = mod_ptr[i * (2 * c) + j];
+            b_ptr[i * c + j] = mod_ptr[i * (2 * c) + c + j];
+        }
+    }
 
-    Variable one_plus_gamma = autodiff::add(gamma_var, 1.0f);
-    return autodiff::add(autodiff::mul(norm_x, one_plus_gamma), beta_var);
+    bool req = mod->requires_grad() && autodiff::Tape::is_active();
+    Variable gamma_var = autodiff::make_variable(std::move(gamma_data), req, name_ + ".gamma");
+    Variable beta_var = autodiff::make_variable(std::move(beta_data), req, name_ + ".beta");
+
+    if (req) {
+        auto node_gamma = std::make_shared<autodiff::BackwardNode>(
+            std::vector<Variable>{mod},
+            [mod, b, c](const tensor::Tensor& grad_out) {
+                if (mod->requires_grad()) {
+                    tensor::Tensor g_mod({b, 2 * c}, 0.0f);
+                    float_t* gm_ptr = g_mod.data();
+                    const float_t* go_ptr = grad_out.data();
+                    for (dim_t i = 0; i < b; ++i) {
+                        for (dim_t j = 0; j < c; ++j) {
+                            gm_ptr[i * (2 * c) + j] = go_ptr[i * c + j];
+                        }
+                    }
+                    if (mod->grad().is_empty()) mod->grad() = std::move(g_mod);
+                    else mod->grad().add_(g_mod);
+                }
+            },
+            "adagn_split_gamma"
+        );
+        gamma_var->set_creator(std::move(node_gamma));
+
+        auto node_beta = std::make_shared<autodiff::BackwardNode>(
+            std::vector<Variable>{mod},
+            [mod, b, c](const tensor::Tensor& grad_out) {
+                if (mod->requires_grad()) {
+                    tensor::Tensor g_mod({b, 2 * c}, 0.0f);
+                    float_t* gm_ptr = g_mod.data();
+                    const float_t* go_ptr = grad_out.data();
+                    for (dim_t i = 0; i < b; ++i) {
+                        for (dim_t j = 0; j < c; ++j) {
+                            gm_ptr[i * (2 * c) + c + j] = go_ptr[i * c + j];
+                        }
+                    }
+                    if (mod->grad().is_empty()) mod->grad() = std::move(g_mod);
+                    else mod->grad().add_(g_mod);
+                }
+            },
+            "adagn_split_beta"
+        );
+        beta_var->set_creator(std::move(node_beta));
+    }
+
+    Variable gamma_4d = autodiff::reshape(gamma_var, {b, c, 1, 1});
+    Variable beta_4d = autodiff::reshape(beta_var, {b, c, 1, 1});
+
+    Variable one_plus_gamma = autodiff::add(gamma_4d, 1.0f);
+    return autodiff::add(autodiff::mul(norm_x, one_plus_gamma), beta_4d);
 }
 
 // ---------------------------------------------------------------------------
